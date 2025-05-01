@@ -22,7 +22,7 @@ import java.util.logging.Level;
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.1.0
+ * @version 1.1.1
  */
 public final class Main {
 
@@ -168,6 +168,9 @@ public final class Main {
             CNFConverter converter = new CNFConverter();
             Object result = converter.visit(tree);
             String cnfFormula = result.toString();
+
+            LOGGER.info("Input originale: " + input);
+            LOGGER.info("Formula CNF: " + cnfFormula);
 
             // Salva la formula CNF in un nuovo file
             saveCNFFormula(filePath, cnfFormula);
