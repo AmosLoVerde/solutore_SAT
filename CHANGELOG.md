@@ -5,6 +5,12 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.2.0] - 2025-05-01
+### Added
+- Aggiunta l'opzione `-d <percorso_cartella>` alla CLI per eseguire il processo
+  su tutti i file `.txt` presenti nella cartella specificata.
+- Validazione degli argomenti: le opzioni `-f` e `-d` sono ora mutuamente esclusive.
+
 ## [1.1.1] - 2025-05-01
 ### Fixed
 - Corretto un bug nella classe `CNFConverter` che causava una conversione errata di alcune formule logiche complesse in forma normale congiuntiva (CNF).
