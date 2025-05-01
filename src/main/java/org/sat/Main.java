@@ -1,6 +1,19 @@
 package org.sat;
 
+import org.antlr.v4.runtime.CharStream;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.tree.ParseTree;
+import org.sat.antlr.org.sat.parser.LogicFormulaLexer;
+import org.sat.antlr.org.sat.parser.LogicFormulaParser;
+import org.sat.cnf.CNFConverter;
+
 import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -9,7 +22,7 @@ import java.util.logging.Level;
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.0.0
+ * @version 1.1.0
  */
 public final class Main {
 
@@ -48,8 +61,8 @@ public final class Main {
 
         // Avvio dell'elaborazione se è stato specificato un file valido
         if (filePath != null) {
-            LOGGER.info(() -> "File CNF specificato: " + filePath);
-            System.out.println("File CNF specificato: " + filePath);
+            LOGGER.info(() -> "File TXT specificato: " + filePath);
+            System.out.println("File TXT specificato: " + filePath);
             processFile(filePath);
         }
     }
@@ -126,30 +139,91 @@ public final class Main {
     private static void printHelp() {
         System.out.println("Utilizzo: java -jar solutore_SAT.jar [opzioni]");
         System.out.println("Opzioni disponibili:");
-        System.out.println("  -f <file>      Specifica un file .cnf da risolvere");
+        System.out.println("  -f <file>      Specifica un file .txt da risolvere");
         System.out.println("  -h             Mostra questo messaggio di help");
     }
 
     /**
-     * Elabora il file CNF specificato.
-     * Questo metodo invoca il parser e trasmette i dati al risolutore.
+     * Elabora il file TXT specificato.
+     * Legge la formula logica, la converte in CNF e salva il risultato.
      *
-     * @param filePath percorso del file CNF da elaborare
+     * @param filePath percorso del file TXT da elaborare
      */
     private static void processFile(String filePath) {
         try {
             LOGGER.info(() -> "Inizio elaborazione del file: " + filePath);
             System.out.println("Elaborazione del file in corso...");
 
-            // TODO: Implementare la logica di parsing e risoluzione
-            // FileParser parser = new FileParser(filePath);
-            // SatSolver solver = new SatSolver(parser.parse());
-            // Result result = solver.solve();
+            // Leggi il contenuto del file
+            String formulaText = readFileContent(filePath);
+
+            // Crea il parser ANTLR e analizza la formula
+            CharStream input = CharStreams.fromString(formulaText);
+            LogicFormulaLexer lexer = new LogicFormulaLexer(input);
+            CommonTokenStream tokens = new CommonTokenStream(lexer);
+            LogicFormulaParser parser = new LogicFormulaParser(tokens);
+            ParseTree tree = parser.formula();
+
+            // Converti la formula in CNF
+            CNFConverter converter = new CNFConverter();
+            Object result = converter.visit(tree);
+            String cnfFormula = result.toString();
+
+            // Salva la formula CNF in un nuovo file
+            saveCNFFormula(filePath, cnfFormula);
 
             LOGGER.info("Elaborazione file completata.");
+            System.out.println("Elaborazione file completata con successo.");
+            System.out.println("Formula CNF salvata nella cartella CNF.");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Errore durante l'elaborazione del file", e);
             System.out.println("Si è verificato un errore durante l'elaborazione: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Legge il contenuto del file di testo.
+     *
+     * @param filePath percorso del file da leggere
+     * @return contenuto del file come stringa
+     * @throws IOException se si verifica un errore durante la lettura
+     */
+    private static String readFileContent(String filePath) throws IOException {
+        LOGGER.info(() -> "Lettura del file: " + filePath);
+        return Files.readString(Path.of(filePath)).trim();
+    }
+
+    /**
+     * Salva la formula CNF in un nuovo file.
+     *
+     * @param originalFilePath percorso del file originale
+     * @param cnfFormula formula CNF da salvare
+     * @throws IOException se si verifica un errore durante la scrittura
+     */
+    private static void saveCNFFormula(String originalFilePath, String cnfFormula) throws IOException {
+        // Ottieni il percorso della directory del file originale
+        Path originalPath = Paths.get(originalFilePath);
+        Path parentDir = originalPath.getParent();
+
+        // Crea la directory CNF se non esiste
+        Path cnfDir = parentDir != null ?
+                parentDir.resolve("CNF") :
+                Paths.get("CNF");
+
+        Files.createDirectories(cnfDir);
+
+        // Ottieni il nome del file originale senza estensione
+        String originalFileName = originalPath.getFileName().toString();
+        String baseFileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
+
+        // Crea il nuovo file .cnf
+        Path cnfFilePath = cnfDir.resolve(baseFileName + ".cnf");
+
+        LOGGER.info(() -> "Salvataggio della formula CNF nel file: " + cnfFilePath);
+
+        // Scrivi la formula CNF nel nuovo file
+        try (FileWriter writer = new FileWriter(cnfFilePath.toFile())) {
+            writer.write(cnfFormula);
         }
     }
 }

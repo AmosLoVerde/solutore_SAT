@@ -15,36 +15,36 @@ formula : biconditional EOF ;
 
 // Livello 5: doppia implicazione (associatività a sinistra)
 biconditional
-    : implication (IFF implication)*
+    : implication (IFF implication)*                    #iff
     ;
 
 // Livello 4: implicazione (associatività a destra)
 implication
-    : disjunction (IMPLIES implication)?
+    : disjunction (IMPLIES implication)?                #implies
     ;
 
 // Livello 3: disgiunzione (associatività a sinistra)
 disjunction
-    : conjunction (OR conjunction)*
+    : conjunction (OR conjunction)*                     #or
     ;
 
 // Livello 2: congiunzione (associatività a sinistra)
 conjunction
-    : negation (AND negation)*
+    : negation (AND negation)*                          #and
     ;
 
 // Livello 1: negazione
 negation
-    : NOT negation
-    | atom
+    : NOT negation                                      #not
+    | atom                                              #var
     ;
 
 // Livello 0: espressioni atomiche
 atom
-    : LPAR biconditional RPAR
-    | IDENTIFIER
-    | TRUE
-    | FALSE
+    : LPAR biconditional RPAR                           #par
+    | IDENTIFIER                                        #id
+    | TRUE                                              #true
+    | FALSE                                             #false
     ;
 
 
