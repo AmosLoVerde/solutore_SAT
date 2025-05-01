@@ -16,13 +16,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.stream.Stream;
 
 /**
  * Classe principale per l'avvio del solutore SAT.
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.1.1
+ * @version 1.2.0
  */
 public final class Main {
 
@@ -34,6 +35,9 @@ public final class Main {
 
     /** Costante per il parametro del file */
     private static final String FILE_PARAM = "-f";
+
+    /** Costante per il parametro della directory */
+    private static final String DIR_PARAM = "-d";
 
     /**
      * Costruttore privato per evitare l'istanziazione di una classe utility.
@@ -56,14 +60,88 @@ public final class Main {
             return;
         }
 
-        // Percorso del file da elaborare
-        String filePath = parseCommandLineArgs(args);
+        // Analizza gli argomenti dalla linea di comando
+        CommandLineResult cmdResult = parseCommandLineArgs(args);
 
-        // Avvio dell'elaborazione se è stato specificato un file valido
-        if (filePath != null) {
-            LOGGER.info(() -> "File TXT specificato: " + filePath);
-            System.out.println("File TXT specificato: " + filePath);
-            processFile(filePath);
+        if (cmdResult != null) {
+            if (cmdResult.isFileMode()) {
+                // Modalità file singolo
+                LOGGER.info(() -> "File TXT specificato: " + cmdResult.getPath());
+                System.out.println("File TXT specificato: " + cmdResult.getPath());
+                processFile(cmdResult.getPath());
+            } else if (cmdResult.isDirectoryMode()) {
+                // Modalità directory
+                LOGGER.info(() -> "Directory specificata: " + cmdResult.getPath());
+                System.out.println("Directory specificata: " + cmdResult.getPath());
+                processDirectory(cmdResult.getPath());
+            }
+        }
+    }
+
+    /**
+     * Elabora tutti i file .txt in una directory specificata.
+     *
+     * @param dirPath percorso della directory da elaborare
+     */
+    private static void processDirectory(String dirPath) {
+        File dir = new File(dirPath);
+
+        if (!dir.exists() || !dir.isDirectory()) {
+            LOGGER.warning(() -> "La directory specificata non esiste o non è una directory: " + dirPath);
+            System.out.println("Errore: la directory specificata non esiste o non è una directory: " + dirPath);
+            return;
+        }
+
+        if (!dir.canRead()) {
+            LOGGER.warning(() -> "La directory specificata non è leggibile: " + dirPath);
+            System.out.println("Errore: la directory specificata non è leggibile: " + dirPath);
+            return;
+        }
+
+        try {
+            int fileCount = 0;
+            int successCount = 0;
+
+            System.out.println("Ricerca dei file .txt nella directory...");
+
+            // Filtra e processa solo i file .txt nella directory
+            try (Stream<Path> pathStream = Files.list(dir.toPath())) {
+                File[] txtFiles = pathStream
+                        .filter(path -> path.toString().toLowerCase().endsWith(".txt"))
+                        .map(Path::toFile)
+                        .toArray(File[]::new);
+
+                fileCount = txtFiles.length;
+
+                if (fileCount == 0) {
+                    LOGGER.info(() -> "Nessun file .txt trovato nella directory: " + dirPath);
+                    System.out.println("Nessun file .txt trovato nella directory specificata.");
+                    return;
+                }
+
+                System.out.println("Trovati " + fileCount + " file .txt da elaborare.");
+
+                // Elabora ogni file .txt trovato
+                for (File file : txtFiles) {
+                    try {
+                        System.out.println("\nElaborazione del file: " + file.getName());
+                        processFile(file.getAbsolutePath());
+                        successCount++;
+                    } catch (Exception e) {
+                        LOGGER.log(Level.WARNING, "Errore durante l'elaborazione del file: " + file.getName(), e);
+                        System.out.println("Errore durante l'elaborazione del file " + file.getName() + ": " + e.getMessage());
+                    }
+                }
+            }
+
+            System.out.println("\nRiepilogo elaborazione directory:");
+            System.out.println("  File .txt trovati: " + fileCount);
+            System.out.println("  File elaborati con successo: " + successCount);
+            System.out.println("  File con errori: " + (fileCount - successCount));
+
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Errore nell'accesso alla directory", e);
+            System.out.println("Si è verificato un errore durante l'accesso alla directory: " + e.getMessage());
         }
     }
 
@@ -71,10 +149,12 @@ public final class Main {
      * Analizza gli argomenti della linea di comando.
      *
      * @param args array di argomenti da analizzare
-     * @return il percorso del file specifico o null se non valido o non specificato
+     * @return un oggetto CommandLineResult contenente il percorso e la modalità di elaborazione
      */
-    private static String parseCommandLineArgs(String[] args) {
-        String filePath = null;
+    private static CommandLineResult parseCommandLineArgs(String[] args) {
+        String path = null;
+        boolean isFileMode = false;
+        boolean isDirectoryMode = false;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -83,14 +163,43 @@ public final class Main {
                     return null;
 
                 case FILE_PARAM:
+                    // Controlla se l'opzione -d è già stata specificata
+                    if (isDirectoryMode) {
+                        LOGGER.warning("Impossibile specificare sia -f che -d. Usa solo una delle due opzioni.");
+                        System.out.println("Errore: impossibile specificare sia -f che -d. Usa solo una delle due opzioni.");
+                        return null;
+                    }
+
                     if (i + 1 < args.length) {
-                        filePath = args[++i];
-                        if (!validateFile(filePath)) {
+                        path = args[++i];
+                        if (!validateFile(path)) {
                             return null;
                         }
+                        isFileMode = true;
                     } else {
                         LOGGER.warning("Parametro -f fornito senza specificare un file.");
                         System.out.println("Errore: parametro -f fornito senza specificare un file.");
+                        return null;
+                    }
+                    break;
+
+                case DIR_PARAM:
+                    // Controlla se l'opzione -f è già stata specificata
+                    if (isFileMode) {
+                        LOGGER.warning("Impossibile specificare sia -f che -d. Usa solo una delle due opzioni.");
+                        System.out.println("Errore: impossibile specificare sia -f che -d. Usa solo una delle due opzioni.");
+                        return null;
+                    }
+
+                    if (i + 1 < args.length) {
+                        path = args[++i];
+                        if (!validateDirectory(path)) {
+                            return null;
+                        }
+                        isDirectoryMode = true;
+                    } else {
+                        LOGGER.warning("Parametro -d fornito senza specificare una directory.");
+                        System.out.println("Errore: parametro -d fornito senza specificare una directory.");
                         return null;
                     }
                     break;
@@ -104,7 +213,14 @@ public final class Main {
             }
         }
 
-        return filePath;
+        if (path != null) {
+            return new CommandLineResult(path, isFileMode, isDirectoryMode);
+        } else {
+            LOGGER.warning("Nessun file o directory specificati.");
+            System.out.println("Errore: nessun file o directory specificati.");
+            System.out.println("Usa -h per visualizzare la lista dei parametri disponibili.");
+            return null;
+        }
     }
 
     /**
@@ -134,13 +250,41 @@ public final class Main {
     }
 
     /**
+     * Valida l'esistenza della directory specificata.
+     *
+     * @param dirPath percorso della directory da validare
+     * @return true se la directory esiste, false altrimenti
+     */
+    private static boolean validateDirectory(String dirPath) {
+        File dir = new File(dirPath);
+        if (!dir.exists()) {
+            LOGGER.warning(() -> "La directory specificata non esiste: " + dirPath);
+            System.out.println("Errore: la directory specificata non esiste: " + dirPath);
+            return false;
+        }
+        if (!dir.isDirectory()) {
+            LOGGER.warning(() -> "Il percorso specificato non è una directory: " + dirPath);
+            System.out.println("Errore: il percorso specificato non è una directory: " + dirPath);
+            return false;
+        }
+        if (!dir.canRead()) {
+            LOGGER.warning(() -> "La directory specificata non è leggibile: " + dirPath);
+            System.out.println("Errore: la directory specificata non è leggibile: " + dirPath);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Visualizza le informazioni di aiuto sul corretto utilizzo del programma.
      */
     private static void printHelp() {
         System.out.println("Utilizzo: java -jar solutore_SAT.jar [opzioni]");
         System.out.println("Opzioni disponibili:");
         System.out.println("  -f <file>      Specifica un file .txt da risolvere");
+        System.out.println("  -d <directory> Specifica una directory con file .txt da risolvere");
         System.out.println("  -h             Mostra questo messaggio di help");
+        System.out.println("\nNota: Le opzioni -f e -d sono mutuamente esclusive.");
     }
 
     /**
@@ -181,6 +325,7 @@ public final class Main {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Errore durante l'elaborazione del file", e);
             System.out.println("Si è verificato un errore durante l'elaborazione: " + e.getMessage());
+            throw new RuntimeException("Errore durante l'elaborazione del file", e);
         }
     }
 
@@ -227,6 +372,55 @@ public final class Main {
         // Scrivi la formula CNF nel nuovo file
         try (FileWriter writer = new FileWriter(cnfFilePath.toFile())) {
             writer.write(cnfFormula);
+        }
+    }
+
+    /**
+     * Classe interna per rappresentare il risultato dell'analisi della linea di comando.
+     */
+    private static class CommandLineResult {
+        private final String path;
+        private final boolean isFileMode;
+        private final boolean isDirectoryMode;
+
+        /**
+         * Costruttore per CommandLineResult.
+         *
+         * @param path percorso del file o della directory
+         * @param isFileMode true se si tratta di un file
+         * @param isDirectoryMode true se si tratta di una directory
+         */
+        public CommandLineResult(String path, boolean isFileMode, boolean isDirectoryMode) {
+            this.path = path;
+            this.isFileMode = isFileMode;
+            this.isDirectoryMode = isDirectoryMode;
+        }
+
+        /**
+         * Restituisce il percorso del file o della directory.
+         *
+         * @return percorso come stringa
+         */
+        public String getPath() {
+            return path;
+        }
+
+        /**
+         * Verifica se è attiva la modalità file.
+         *
+         * @return true se è attiva la modalità file
+         */
+        public boolean isFileMode() {
+            return isFileMode;
+        }
+
+        /**
+         * Verifica se è attiva la modalità directory.
+         *
+         * @return true se è attiva la modalità directory
+         */
+        public boolean isDirectoryMode() {
+            return isDirectoryMode;
         }
     }
 }
