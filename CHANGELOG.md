@@ -5,6 +5,12 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.2.1] - 2025-05-01
+### Fixed
+- Modificata la classe `CNFConverter` per evitare la semplificazione automatica
+  di sottoformule sempre vere. Ora tali parti vengono mantenute in forma esplicita
+  nella traduzione in CNF, per migliorare la chiarezza del risultato.
+
 ## [1.2.0] - 2025-05-01
 ### Added
 - Aggiunta l'opzione `-d <percorso_cartella>` alla CLI per eseguire il processo

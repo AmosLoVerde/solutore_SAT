@@ -16,7 +16,7 @@ import java.util.logging.Level;
  * Applica le trasformazioni necessarie e semplifica la formula risultante.
  *
  * @author Amos Lo Verde
- * @version 1.1.1
+ * @version 1.2.0
  */
 public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> {
 
@@ -293,23 +293,22 @@ public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> 
                         Formula simplified = op.simplify();
                         if (simplified.type == Type.OR) {
                             for (Formula nested : simplified.operands) {
-                                if (addToClauseWithCheck(flattenedOrs, nested, atomsInClause)) {
-                                    hasContradiction = true;
-                                    break;
-                                }
+                                // Rimosso il controllo che inseriva TRUE in caso di contraddizione
+                                addToClauseWithoutCheck(flattenedOrs, nested);
                             }
                         } else {
-                            if (addToClauseWithCheck(flattenedOrs, simplified, atomsInClause)) {
-                                hasContradiction = true;
-                                break;
-                            }
+                            // Rimosso il controllo che inseriva TRUE in caso di contraddizione
+                            addToClauseWithoutCheck(flattenedOrs, simplified);
                         }
                     }
 
+                    // Rimosso il controllo che restituiva TRUE in caso di contraddizione
+                    /* RIMOSSO:
                     // Se la clausola contiene sia un letterale che la sua negazione, è sempre vera (tautologia)
                     if (hasContradiction) {
                         return new Formula("TRUE");
                     }
+                    */
 
                     if (flattenedOrs.size() == 1) {
                         return flattenedOrs.get(0);
@@ -332,12 +331,16 @@ public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> 
         }
 
         /**
-         * Aggiunge un letterale alla clausola controllando contraddizioni.
+         * Aggiunge un letterale alla clausola senza controllare contraddizioni.
          * @param clauseTerms termini della clausola
          * @param term termine da aggiungere
-         * @param atomsInClause atomi già presenti nella clausola
-         * @return true se è stata trovata una contraddizione
          */
+        private void addToClauseWithoutCheck(List<Formula> clauseTerms, Formula term) {
+            // Semplicemente aggiunge il termine senza controllare contraddizioni
+            addUniqueClause(clauseTerms, term);
+        }
+
+        /* RIMOSSO/COMMENTATO:
         private boolean addToClauseWithCheck(List<Formula> clauseTerms, Formula term, Set<String> atomsInClause) {
             if (term.type == Type.ATOM) {
                 String atom = term.atom;
@@ -360,6 +363,7 @@ public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> 
             }
             return false;
         }
+        */
 
         /**
          * Verifica se due formule sono uguali.
