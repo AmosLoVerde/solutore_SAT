@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.2.0
+ * @version 1.2.1
  */
 public final class Main {
 

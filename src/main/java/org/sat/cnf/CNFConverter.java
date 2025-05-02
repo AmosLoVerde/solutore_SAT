@@ -16,7 +16,7 @@ import java.util.logging.Level;
  * Applica le trasformazioni necessarie e semplifica la formula risultante.
  *
  * @author Amos Lo Verde
- * @version 1.2.0
+ * @version 1.2.1
  */
 public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> {
 
