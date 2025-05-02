@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.2.0
+ * @version 1.3.0
  */
 public final class Main {
 
@@ -38,6 +38,9 @@ public final class Main {
 
     /** Costante per il parametro della directory */
     private static final String DIR_PARAM = "-d";
+
+    /** Costante per il parametro della directory di output */
+    private static final String OUTPUT_PARAM = "-o";
 
     /**
      * Costruttore privato per evitare l'istanziazione di una classe utility.
@@ -68,12 +71,20 @@ public final class Main {
                 // Modalità file singolo
                 LOGGER.info(() -> "File TXT specificato: " + cmdResult.getPath());
                 System.out.println("File TXT specificato: " + cmdResult.getPath());
-                processFile(cmdResult.getPath());
+                if (cmdResult.getOutputPath() != null) {
+                    LOGGER.info(() -> "Directory di output specificata: " + cmdResult.getOutputPath());
+                    System.out.println("Directory di output specificata: " + cmdResult.getOutputPath());
+                }
+                processFile(cmdResult.getPath(), cmdResult.getOutputPath());
             } else if (cmdResult.isDirectoryMode()) {
                 // Modalità directory
                 LOGGER.info(() -> "Directory specificata: " + cmdResult.getPath());
                 System.out.println("Directory specificata: " + cmdResult.getPath());
-                processDirectory(cmdResult.getPath());
+                if (cmdResult.getOutputPath() != null) {
+                    LOGGER.info(() -> "Directory di output specificata: " + cmdResult.getOutputPath());
+                    System.out.println("Directory di output specificata: " + cmdResult.getOutputPath());
+                }
+                processDirectory(cmdResult.getPath(), cmdResult.getOutputPath());
             }
         }
     }
@@ -82,8 +93,9 @@ public final class Main {
      * Elabora tutti i file .txt in una directory specificata.
      *
      * @param dirPath percorso della directory da elaborare
+     * @param outputPath percorso della directory di output (opzionale)
      */
-    private static void processDirectory(String dirPath) {
+    private static void processDirectory(String dirPath, String outputPath) {
         File dir = new File(dirPath);
 
         if (!dir.exists() || !dir.isDirectory()) {
@@ -125,7 +137,7 @@ public final class Main {
                 for (File file : txtFiles) {
                     try {
                         System.out.println("\nElaborazione del file: " + file.getName());
-                        processFile(file.getAbsolutePath());
+                        processFile(file.getAbsolutePath(), outputPath);
                         successCount++;
                     } catch (Exception e) {
                         LOGGER.log(Level.WARNING, "Errore durante l'elaborazione del file: " + file.getName(), e);
@@ -153,6 +165,7 @@ public final class Main {
      */
     private static CommandLineResult parseCommandLineArgs(String[] args) {
         String path = null;
+        String outputPath = null;
         boolean isFileMode = false;
         boolean isDirectoryMode = false;
 
@@ -204,6 +217,19 @@ public final class Main {
                     }
                     break;
 
+                case OUTPUT_PARAM:
+                    if (i + 1 < args.length) {
+                        outputPath = args[++i];
+                        if (!validateOutputDirectory(outputPath)) {
+                            return null;
+                        }
+                    } else {
+                        LOGGER.warning("Parametro -o fornito senza specificare una directory.");
+                        System.out.println("Errore: parametro -o fornito senza specificare una directory.");
+                        return null;
+                    }
+                    break;
+
                 default:
                     int finalI = i;
                     LOGGER.warning(() -> "Parametro sconosciuto: " + args[finalI]);
@@ -214,7 +240,7 @@ public final class Main {
         }
 
         if (path != null) {
-            return new CommandLineResult(path, isFileMode, isDirectoryMode);
+            return new CommandLineResult(path, outputPath, isFileMode, isDirectoryMode);
         } else {
             LOGGER.warning("Nessun file o directory specificati.");
             System.out.println("Errore: nessun file o directory specificati.");
@@ -276,15 +302,54 @@ public final class Main {
     }
 
     /**
+     * Valida la directory di output specificata.
+     * Se la directory non esiste, tenta di crearla.
+     *
+     * @param dirPath percorso della directory di output da validare
+     * @return true se la directory esiste o è stata creata con successo, false altrimenti
+     */
+    private static boolean validateOutputDirectory(String dirPath) {
+        File dir = new File(dirPath);
+        if (!dir.exists()) {
+            LOGGER.info(() -> "La directory di output non esiste, tentativo di creazione: " + dirPath);
+            System.out.println("La directory di output non esiste, tentativo di creazione: " + dirPath);
+            if (!dir.mkdirs()) {
+                LOGGER.warning(() -> "Impossibile creare la directory di output: " + dirPath);
+                System.out.println("Errore: impossibile creare la directory di output: " + dirPath);
+                return false;
+            }
+            LOGGER.info(() -> "Directory di output creata con successo: " + dirPath);
+            System.out.println("Directory di output creata con successo: " + dirPath);
+        } else if (!dir.isDirectory()) {
+            LOGGER.warning(() -> "Il percorso di output specificato non è una directory: " + dirPath);
+            System.out.println("Errore: il percorso di output specificato non è una directory: " + dirPath);
+            return false;
+        }
+
+        // Verifica i permessi di scrittura
+        if (!dir.canWrite()) {
+            LOGGER.warning(() -> "La directory di output non è scrivibile: " + dirPath);
+            System.out.println("Errore: la directory di output non è scrivibile: " + dirPath);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Visualizza le informazioni di aiuto sul corretto utilizzo del programma.
      */
     private static void printHelp() {
         System.out.println("Utilizzo: java -jar solutore_SAT.jar [opzioni]");
         System.out.println("Opzioni disponibili:");
-        System.out.println("  -f <file>      Specifica un file .txt da risolvere");
-        System.out.println("  -d <directory> Specifica una directory con file .txt da risolvere");
-        System.out.println("  -h             Mostra questo messaggio di help");
-        System.out.println("\nNota: Le opzioni -f e -d sono mutuamente esclusive.");
+        System.out.println("  -f <file>       Specifica un file .txt da risolvere");
+        System.out.println("  -d <directory>  Specifica una directory con file .txt da risolvere");
+        System.out.println("  -o <directory>  Specifica una directory di output per i file CNF (opzionale)");
+        System.out.println("  -h              Mostra questo messaggio di help");
+        System.out.println("\nNote:");
+        System.out.println("  - Le opzioni -f e -d sono mutuamente esclusive.");
+        System.out.println("  - L'opzione -o è opzionale e può essere usata sia con -f che con -d.");
+        System.out.println("  - Se -o non è specificata, i file CNF saranno salvati in una cartella CNF");
+        System.out.println("    nella stessa directory del file di input o della directory di input.");
     }
 
     /**
@@ -292,8 +357,9 @@ public final class Main {
      * Legge la formula logica, la converte in CNF e salva il risultato.
      *
      * @param filePath percorso del file TXT da elaborare
+     * @param outputPath percorso della directory di output (opzionale)
      */
-    private static void processFile(String filePath) {
+    private static void processFile(String filePath, String outputPath) {
         try {
             LOGGER.info(() -> "Inizio elaborazione del file: " + filePath);
             System.out.println("Elaborazione del file in corso...");
@@ -317,11 +383,11 @@ public final class Main {
             LOGGER.info("Formula CNF: " + cnfFormula);
 
             // Salva la formula CNF in un nuovo file
-            saveCNFFormula(filePath, cnfFormula);
+            saveCNFFormula(filePath, cnfFormula, outputPath);
 
             LOGGER.info("Elaborazione file completata.");
             System.out.println("Elaborazione file completata con successo.");
-            System.out.println("Formula CNF salvata nella cartella CNF.");
+            System.out.println("Formula CNF salvata nella cartella specificata.");
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Errore durante l'elaborazione del file", e);
             System.out.println("Si è verificato un errore durante l'elaborazione: " + e.getMessage());
@@ -346,21 +412,31 @@ public final class Main {
      *
      * @param originalFilePath percorso del file originale
      * @param cnfFormula formula CNF da salvare
+     * @param outputPath percorso della directory di output (opzionale)
      * @throws IOException se si verifica un errore durante la scrittura
      */
-    private static void saveCNFFormula(String originalFilePath, String cnfFormula) throws IOException {
-        // Ottieni il percorso della directory del file originale
-        Path originalPath = Paths.get(originalFilePath);
-        Path parentDir = originalPath.getParent();
+    private static void saveCNFFormula(String originalFilePath, String cnfFormula, String outputPath) throws IOException {
+        Path cnfDir;
 
-        // Crea la directory CNF se non esiste
-        Path cnfDir = parentDir != null ?
-                parentDir.resolve("CNF") :
-                Paths.get("CNF");
+        if (outputPath != null) {
+            // Usa la directory di output specificata, e aggiungi sempre la sottodirectory CNF
+            cnfDir = Paths.get(outputPath).resolve("CNF");
+        } else {
+            // Ottieni il percorso della directory del file originale
+            Path originalPath = Paths.get(originalFilePath);
+            Path parentDir = originalPath.getParent();
 
+            // Crea la directory CNF se non esiste
+            cnfDir = parentDir != null ?
+                    parentDir.resolve("CNF") :
+                    Paths.get("CNF");
+        }
+
+        // Assicurati che la directory CNF esista
         Files.createDirectories(cnfDir);
 
         // Ottieni il nome del file originale senza estensione
+        Path originalPath = Paths.get(originalFilePath);
         String originalFileName = originalPath.getFileName().toString();
         String baseFileName = originalFileName.substring(0, originalFileName.lastIndexOf('.'));
 
@@ -380,6 +456,7 @@ public final class Main {
      */
     private static class CommandLineResult {
         private final String path;
+        private final String outputPath;
         private final boolean isFileMode;
         private final boolean isDirectoryMode;
 
@@ -387,11 +464,13 @@ public final class Main {
          * Costruttore per CommandLineResult.
          *
          * @param path percorso del file o della directory
+         * @param outputPath percorso della directory di output (opzionale)
          * @param isFileMode true se si tratta di un file
          * @param isDirectoryMode true se si tratta di una directory
          */
-        public CommandLineResult(String path, boolean isFileMode, boolean isDirectoryMode) {
+        public CommandLineResult(String path, String outputPath, boolean isFileMode, boolean isDirectoryMode) {
             this.path = path;
+            this.outputPath = outputPath;
             this.isFileMode = isFileMode;
             this.isDirectoryMode = isDirectoryMode;
         }
@@ -403,6 +482,15 @@ public final class Main {
          */
         public String getPath() {
             return path;
+        }
+
+        /**
+         * Restituisce il percorso della directory di output.
+         *
+         * @return percorso di output come stringa o null se non specificato
+         */
+        public String getOutputPath() {
+            return outputPath;
         }
 
         /**

@@ -15,8 +15,6 @@ import java.util.logging.Level;
  * Implementa un visitor per l'albero di parsing generato dalla grammatica LogicFormula.
  * Applica le trasformazioni necessarie e semplifica la formula risultante.
  *
- * @author Amos Lo Verde
- * @version 1.2.0
  */
 public class CNFConverter extends LogicFormulaBaseVisitor<CNFConverter.Formula> {
 
