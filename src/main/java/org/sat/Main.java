@@ -5,8 +5,8 @@ import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.sat.antlr.org.sat.parser.LogicFormulaLexer;
-import org.sat.antlr.org.sat.parser.LogicFormulaParser;
 import org.sat.cnf.CNFConverter;
+import org.sat.cnf.LogicFormulaParser;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  * Gestisce i parametri della linea di comando e inizializza il processo di risoluzione.
  *
  * @author Amos Lo Verde
- * @version 1.3.0
+ * @version 1.4.0
  */
 public final class Main {
 
@@ -371,19 +371,20 @@ public final class Main {
             CharStream input = CharStreams.fromString(formulaText);
             LogicFormulaLexer lexer = new LogicFormulaLexer(input);
             CommonTokenStream tokens = new CommonTokenStream(lexer);
-            LogicFormulaParser parser = new LogicFormulaParser(tokens);
+            org.sat.antlr.org.sat.parser.LogicFormulaParser parser = new org.sat.antlr.org.sat.parser.LogicFormulaParser(tokens);
             ParseTree tree = parser.formula();
 
             // Converti la formula in CNF
-            CNFConverter converter = new CNFConverter();
-            Object result = converter.visit(tree);
-            String cnfFormula = result.toString();
+            LogicFormulaParser converter = new LogicFormulaParser();
+            CNFConverter formula = converter.visit(tree);
+            CNFConverter cnfFormula = formula.toCNF();
+            String cnfFormulaString = cnfFormula.toString();
 
             LOGGER.info("Input originale: " + input);
-            LOGGER.info("Formula CNF: " + cnfFormula);
+            LOGGER.info("Formula CNF: " + cnfFormulaString);
 
             // Salva la formula CNF in un nuovo file
-            saveCNFFormula(filePath, cnfFormula, outputPath);
+            saveCNFFormula(filePath, cnfFormulaString, outputPath);
 
             LOGGER.info("Elaborazione file completata.");
             System.out.println("Elaborazione file completata con successo.");

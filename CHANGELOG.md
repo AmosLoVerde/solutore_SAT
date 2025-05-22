@@ -5,6 +5,16 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.4.0] - 2025-05-22
+### Changed
+- Separata la logica di parsing e conversione in CNF:
+  - Creato il file `LogicFormulaParser.java` per contenere tutti i metodi `visit`
+    responsabili della visita dell'albero sintattico generato da ANTLR.
+  - `CNFConverter.java` ora contiene unicamente i metodi per convertire una formula
+    logica in forma normale congiuntiva (CNF).
+- Rimossa la classe interna `Formula`, ora completamente rifattorizzata.
+
+
 ## [1.3.0] - 2025-05-02
 ### Added
 - Aggiunta l'opzione `-o <percorso>` alla riga di comando per permettere
