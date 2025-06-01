@@ -5,6 +5,39 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.5.0] - 2025-06-01
+### Added
+- Prima versione dell'algoritmo CDCL con supporto per:
+  - Euristica 1UIP (First Unique Implication Point) per l'apprendimento dei conflitti
+  - Euristica VSIDS per la scelta delle variabili decisionali
+  - Generazione della prova (in fase di sviluppo)
+
+- Creato il package `cdcl` con i seguenti file:
+  - `CDCLSolver.java`
+  - `CDCLSupport.java`
+  - `ProofGenerator.java`
+  - `SATResult.java`
+  - `SATStatistics.java`
+
+⚠️ Nota: la generazione della prova non è ancora completamente funzionante
+e la procedura necessita di ulteriore validazione e revisione dei commenti.
+
+
+## [1.4.0] - 2025-05-22
+### Changed
+- Separata la logica di parsing e conversione in CNF:
+  - Creato il file `LogicFormulaParser.java` per contenere tutti i metodi `visit`
+    responsabili della visita dell'albero sintattico generato da ANTLR.
+  - `CNFConverter.java` ora contiene unicamente i metodi per convertire una formula
+    logica in forma normale congiuntiva (CNF).
+- Rimossa la classe interna `Formula`, ora completamente rifattorizzata.
+
+
+## [1.3.0] - 2025-05-02
+### Added
+- Aggiunta l'opzione `-o <percorso>` alla riga di comando per permettere
+  all’utente di specificare la directory di destinazione dei file di output.
+
 ## [1.2.1] - 2025-05-01
 ### Fixed
 - Modificata la classe `CNFConverter` per evitare la semplificazione automatica
