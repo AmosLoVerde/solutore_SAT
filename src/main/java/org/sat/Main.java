@@ -40,7 +40,7 @@ import java.util.concurrent.*;
  * in forma normale congiuntiva (CNF) prima di applicare l'algoritmo CDCL.
  *
  * @author Amos Lo Verde
- * @version 1.4.0
+ * @version 1.5.0
  */
 public final class Main {
     /**
