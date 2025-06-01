@@ -5,6 +5,24 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.5.0] - 2025-06-01
+### Added
+- Prima versione dell'algoritmo CDCL con supporto per:
+  - Euristica 1UIP (First Unique Implication Point) per l'apprendimento dei conflitti
+  - Euristica VSIDS per la scelta delle variabili decisionali
+  - Generazione della prova (in fase di sviluppo)
+
+- Creato il package `cdcl` con i seguenti file:
+  - `CDCLSolver.java`
+  - `CDCLSupport.java`
+  - `ProofGenerator.java`
+  - `SATResult.java`
+  - `SATStatistics.java`
+
+⚠️ Nota: la generazione della prova non è ancora completamente funzionante
+e la procedura necessita di ulteriore validazione e revisione dei commenti.
+
+
 ## [1.4.0] - 2025-05-22
 ### Changed
 - Separata la logica di parsing e conversione in CNF:

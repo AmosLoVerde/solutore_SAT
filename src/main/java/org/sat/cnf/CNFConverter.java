@@ -21,10 +21,10 @@ public class CNFConverter {
         AND, OR, NOT, ATOM
     }
 
-    Type type;
-    String atom;                    // usato quando type == ATOM
-    CNFConverter operand;           // usato quando type == NOT
-    List<CNFConverter> operands;    // usato quando type == AND or type == OR
+    public Type type;
+    public String atom;                    // usato quando type == ATOM
+    public CNFConverter operand;           // usato quando type == NOT
+    public List<CNFConverter> operands;    // usato quando type == AND or type == OR
 
     // Costruttore per atomi
     public CNFConverter(String atom) {
