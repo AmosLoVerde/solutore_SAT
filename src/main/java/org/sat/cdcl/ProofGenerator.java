@@ -16,15 +16,17 @@ import java.util.stream.Collectors;
  *
  * Caratteristiche Principali:
  * - Tracciamento automatico dei passi di risoluzione durante conflict analysis
+ * - Mapping delle variabili numeriche ai nomi originali per leggibilità
  * - Ottimizzazione intelligente delle prove rimuovendo passi irrilevanti
  * - Generazione di prove formali in formato leggibile
  * - Gestione efficiente della memoria per prove di grandi dimensioni
  * - Validazione dell'integrità delle derivazioni
  *
  * Formato delle Prove:
- * - Ogni passo è una risoluzione binaria: (C1 ∪ {x}) ⊗ (C2 ∪ {¬x}) → (C1 ∪ C2)
- * - La prova termina con la derivazione della clausola vuota (□)
+ * - Ogni passo è una risoluzione binaria: (C1 ∪ {x}) : (C2 ∪ {¬x}) → (C1 ∪ C2)
+ * - La prova termina con la derivazione della clausola vuota ([])
  * - Passi intermedi irrilevanti vengono rimossi per chiarezza
+ * - Utilizza nomi originali delle variabili (P, Q, R invece di 1, 2, 3)
  *
  * Algoritmo di Ottimizzazione:
  * - Analisi della dipendenza tra clausole derivate
@@ -36,10 +38,6 @@ import java.util.stream.Collectors;
  * - Prevenzione di prove ingestibili per problemi complessi
  * - Compattazione intelligente delle rappresentazioni
  *
- * Thread Safety: Thread-safe per registrazione concorrente
- *
- * @version 2.0.0
- * @author Progetto SAT CDCL
  */
 public class ProofGenerator {
 
@@ -93,6 +91,13 @@ public class ProofGenerator {
      */
     private final Set<Integer> registeredClauseHashes;
 
+    /**
+     * Mapping da identificatori numerici delle variabili ai nomi originali.
+     * Utilizzato per generare prove leggibili con nomi significativi.
+     * Esempio: {1 → "P", 2 → "Q", 3 → "R"}
+     */
+    private Map<Integer, String> variableMapping;
+
     // ========================================
     // COSTRUZIONE E INIZIALIZZAZIONE
     // ========================================
@@ -109,12 +114,30 @@ public class ProofGenerator {
         // Inizializzazione strutture dati principali
         this.resolutionSteps = new ArrayList<>();
         this.registeredClauseHashes = new HashSet<>();
+        this.variableMapping = new HashMap<>();
 
         // Inizializzazione stato
         this.emptyClauseDerivated = false;
         this.optimizationCount = 0;
 
         LOGGER.fine("ProofGenerator inizializzato - pronto per tracciamento");
+    }
+
+    // ========================================
+    // CONFIGURAZIONE MAPPING VARIABILI
+    // ========================================
+
+    /**
+     * Imposta il mapping delle variabili numeriche ai nomi originali.
+     *
+     * Questo mapping è essenziale per generare prove leggibili che utilizzano
+     * i nomi originali delle variabili invece degli identificatori numerici interni.
+     *
+     * @param mapping mappa da ID numerico (Integer) a nome originale (String)
+     */
+    public void setVariableMapping(Map<Integer, String> mapping) {
+        this.variableMapping = new HashMap<>(mapping);
+        LOGGER.fine("Mapping variabili impostato per ProofGenerator: " + variableMapping);
     }
 
     // ========================================
@@ -129,7 +152,7 @@ public class ProofGenerator {
      * durante l'analisi di un conflitto.
      *
      * La risoluzione binaria segue la regola:
-     * (C1 ∪ {x}) ⊗ (C2 ∪ {¬x}) → (C1 ∪ C2)
+     * (C1 ∪ {x}) : (C2 ∪ {¬x}) → (C1 ∪ C2)
      * dove x è il letterale di risoluzione.
      *
      * @param parent1 prima clausola parent della risoluzione
@@ -340,20 +363,12 @@ public class ProofGenerator {
     // ========================================
 
     /**
-     * Genera la prova finale di insoddisfacibilità in formato leggibile.
+     * Genera la prova finale di insoddisfacibilità in formato semplificato.
      *
-     * Questo metodo è il cuore del sistema di generazione prove. Combina
-     * ottimizzazione intelligente, formattazione professionale e gestione
-     * di prove di grandi dimensioni per produrre output utile e comprensibile.
+     * MODIFICATO per rimuovere l'enumerazione e fornire formato semplice
+     * come richiesto dalle specifiche.
      *
-     * Processo di Generazione:
-     * 1. Verifica disponibilità di passi registrati
-     * 2. Esegue ottimizzazione per rimuovere passi irrilevanti
-     * 3. Determina strategia di output basata su dimensione
-     * 4. Formatta la prova finale con statistiche
-     * 5. Aggiunge conclusioni e metadata
-     *
-     * @return stringa formattata contenente la prova completa
+     * @return stringa formattata contenente la prova semplificata
      */
     public String generateProof() {
         LOGGER.info("=== INIZIO GENERAZIONE PROVA FINALE ===");
@@ -366,11 +381,8 @@ public class ProofGenerator {
         // Esegue ottimizzazione della prova
         List<ResolutionStep> optimizedSteps = performProofOptimization();
 
-        // Determina strategia di output basata su dimensione
-        boolean isLargeProof = optimizedSteps.size() > LARGE_PROOF_THRESHOLD;
-
-        // Genera la prova formattata
-        String formattedProof = buildFormattedProof(optimizedSteps, isLargeProof);
+        // Genera la prova formattata semplificata
+        String formattedProof = buildSimplifiedProof(optimizedSteps);
 
         LOGGER.info("Prova generata: " + optimizedSteps.size() + " passi ottimizzati da " +
                 resolutionSteps.size() + " originali");
@@ -385,32 +397,11 @@ public class ProofGenerator {
      */
     private String generateEmptyProofMessage() {
         LOGGER.info("Nessun passo di risoluzione disponibile per generazione prova");
-
-        StringBuilder message = new StringBuilder();
-        message.append("GENERAZIONE PROVA NON DISPONIBILE\n");
-        message.append("=================================\n\n");
-        message.append("Motivo: Nessun passo di risoluzione è stato registrato durante l'analisi.\n\n");
-
-        if (emptyClauseDerivated) {
-            message.append("Nota: La formula è stata determinata UNSAT attraverso altri meccanismi\n");
-            message.append("del solver CDCL (es. preprocessamento, unit propagation iniziale).\n");
-        } else {
-            message.append("Questo può indicare che:\n");
-            message.append("- La formula è SAT (non richiede prova di insoddisfacibilità)\n");
-            message.append("- Il solver è stato interrotto prima del completamento\n");
-            message.append("- Si è verificato un errore durante il tracciamento\n");
-        }
-
-        return message.toString();
+        return "Nessuna derivazione esplicita disponibile. La formula è stata determinata UNSAT attraverso l'analisi dei conflitti del solutore CDCL.";
     }
 
     /**
      * Esegue l'ottimizzazione della prova rimuovendo passi irrilevanti.
-     *
-     * L'algoritmo di ottimizzazione implementa una strategia di backward chaining:
-     * partendo dalla clausola vuota (o dall'ultimo passo), identifica tutti i
-     * passi che contribuiscono effettivamente alla derivazione finale e rimuove
-     * quelli che rappresentano rami di derivazione non utilizzati.
      *
      * @return lista ottimizzata dei passi rilevanti
      */
@@ -448,10 +439,6 @@ public class ProofGenerator {
 
     /**
      * Identifica i passi irrilevanti in una singola iterazione di ottimizzazione.
-     *
-     * Un passo è considerato irrilevante se:
-     * - La sua clausola child non viene utilizzata come parent in nessun altro passo
-     * - Non è l'ultimo passo (che rappresenta la derivazione finale)
      *
      * @param steps lista corrente dei passi
      * @return lista dei passi da rimuovere
@@ -496,133 +483,69 @@ public class ProofGenerator {
     }
 
     /**
-     * Costruisce la prova formattata finale con header, contenuto e footer.
+     * Costruisce la prova semplificata senza enumerazione.
+     *
+     * NUOVO METODO per formato semplificato come richiesto.
      *
      * @param optimizedSteps passi ottimizzati da includere
-     * @param isLargeProof flag per gestione prove voluminose
-     * @return prova completa formattata
+     * @return prova semplificata senza numerazione
      */
-    private String buildFormattedProof(List<ResolutionStep> optimizedSteps, boolean isLargeProof) {
+    private String buildSimplifiedProof(List<ResolutionStep> optimizedSteps) {
         StringBuilder proof = new StringBuilder();
 
-        // Header della prova
-        appendProofHeader(proof);
-
-        // Contenuto principale
-        if (isLargeProof) {
-            appendLargeProofSummary(proof, optimizedSteps);
-        } else {
-            appendDetailedProofSteps(proof, optimizedSteps);
+        if (optimizedSteps.isEmpty()) {
+            return "La prova è stata ottimizzata ma non contiene passi rilevanti. " +
+                    "La formula è stata determinata UNSAT attraverso conflict analysis " +
+                    "senza necessità di risoluzione esplicita.";
         }
 
-        // Conclusione e analisi
-        appendProofConclusion(proof);
+        // Genera ogni passo senza numerazione
+        for (ResolutionStep step : optimizedSteps) {
+            String stepFormatted = formatResolutionStepSimple(step);
+            proof.append(stepFormatted).append("\n");
+        }
 
-        // Statistiche finali
-        appendProofStatistics(proof, optimizedSteps);
+        // Rimuovi l'ultimo newline se presente
+        if (proof.length() > 0 && proof.charAt(proof.length() - 1) == '\n') {
+            proof.setLength(proof.length() - 1);
+        }
 
         return proof.toString();
-    }
-
-    /**
-     * Aggiunge l'header formattato alla prova.
-     */
-    private void appendProofHeader(StringBuilder proof) {
-        proof.append("╔══════════════════════════════════════════════════════════════╗\n");
-        proof.append("║                    PROVA DI INSODDISFACIBILITÀ               ║\n");
-        proof.append("║                 Generata da Solutore SAT CDCL                ║\n");
-        proof.append("╚══════════════════════════════════════════════════════════════╝\n\n");
-
-        proof.append("Metodo: Risoluzione proposizionale automatica\n");
-        proof.append("Algoritmo: CDCL con First UIP learning\n");
-        proof.append("Ottimizzazione: Rimozione passi irrilevanti\n\n");
-    }
-
-    /**
-     * Aggiunge un riepilogo per prove troppo voluminose.
-     */
-    private void appendLargeProofSummary(StringBuilder proof, List<ResolutionStep> steps) {
-        proof.append("═══ RIEPILOGO PROVA VOLUMINOSA ═══\n\n");
-        proof.append(String.format(LARGE_PROOF_MESSAGE, LARGE_PROOF_THRESHOLD)).append("\n\n");
-
-        // Mostra primi e ultimi passi come esempio
-        int sampleSize = Math.min(5, steps.size() / 2);
-
-        proof.append("Primi ").append(sampleSize).append(" passi:\n");
-        for (int i = 0; i < sampleSize && i < steps.size(); i++) {
-            proof.append(String.format("%d. %s\n", i + 1, formatResolutionStep(steps.get(i))));
-        }
-
-        if (steps.size() > sampleSize * 2) {
-            proof.append("\n... [").append(steps.size() - sampleSize * 2).append(" passi intermedi omessi] ...\n\n");
-        }
-
-        proof.append("Ultimi ").append(sampleSize).append(" passi:\n");
-        int startIndex = Math.max(sampleSize, steps.size() - sampleSize);
-        for (int i = startIndex; i < steps.size(); i++) {
-            proof.append(String.format("%d. %s\n", i + 1, formatResolutionStep(steps.get(i))));
-        }
-    }
-
-    /**
-     * Aggiunge tutti i passi dettagliati per prove di dimensione gestibile.
-     */
-    private void appendDetailedProofSteps(StringBuilder proof, List<ResolutionStep> steps) {
-        proof.append("═══ DERIVAZIONE DETTAGLIATA ═══\n\n");
-
-        if (steps.isEmpty()) {
-            proof.append("La prova è stata ottimizzata ma non contiene passi rilevanti.\n");
-            proof.append("Questo indica che la formula è stata determinata UNSAT attraverso\n");
-            proof.append("conflict analysis senza necessità di risoluzione esplicita.\n");
-            return;
-        }
-
-        proof.append("Sequenza di risoluzione che porta alla clausola vuota:\n\n");
-
-        // Genera ogni passo con numerazione
-        for (int i = 0; i < steps.size(); i++) {
-            ResolutionStep step = steps.get(i);
-            proof.append(String.format("%3d. %s\n", i + 1, formatResolutionStep(step)));
-        }
-    }
-
-    /**
-     * Aggiunge la conclusione logica della prova.
-     */
-    private void appendProofConclusion(StringBuilder proof) {
-        proof.append("\n═══ CONCLUSIONE ═══\n\n");
-
-        if (emptyClauseDerivated) {
-            proof.append("✓ È stata derivata la clausola vuota (□)\n");
-            proof.append("✓ Per il principio di risoluzione, la formula è INSODDISFACIBILE\n");
-            proof.append("✓ Non esiste alcun assegnamento che renda vera la formula\n");
-        } else {
-            proof.append("! La clausola vuota non è stata derivata esplicitamente\n");
-            proof.append("! Tuttavia, la formula è stata determinata UNSAT dal solver CDCL\n");
-            proof.append("! attraverso conflict analysis e propagazione unitaria\n");
-        }
-    }
-
-    /**
-     * Aggiunge le statistiche finali della prova.
-     */
-    private void appendProofStatistics(StringBuilder proof, List<ResolutionStep> optimizedSteps) {
-        proof.append("\n═══ STATISTICHE PROVA ═══\n");
-        proof.append("Passi registrati originali: ").append(resolutionSteps.size()).append("\n");
-        proof.append("Passi nella prova ottimizzata: ").append(optimizedSteps.size()).append("\n");
-
-        if (resolutionSteps.size() > 0) {
-            double reductionPercentage = 100.0 * (resolutionSteps.size() - optimizedSteps.size()) / resolutionSteps.size();
-            proof.append("Riduzione tramite ottimizzazione: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
-        }
-
-        proof.append("Ottimizzazioni eseguite: ").append(optimizationCount).append("\n");
-        proof.append("Clausola vuota derivata: ").append(emptyClauseDerivated ? "Sì" : "No").append("\n");
     }
 
     // ========================================
     // FORMATTAZIONE E UTILITÀ
     // ========================================
+
+    /**
+     * Formatta un passo di risoluzione in formato semplice senza numerazione.
+     *
+     * NUOVO METODO per formato semplificato.
+     *
+     * @param step passo da formattare
+     * @return rappresentazione testuale semplice del passo
+     */
+    private String formatResolutionStepSimple(ResolutionStep step) {
+        String parent1Str = formatClauseForDisplay(step.getParent1());
+        String parent2Str = formatClauseForDisplay(step.getParent2());
+        String childStr = formatClauseForDisplay(step.getChild());
+
+        return String.format("(%s) : (%s) → %s", parent1Str, parent2Str, childStr);
+    }
+
+    /**
+     * Formatta un passo di risoluzione con dettagli migliorati per la prova finale.
+     *
+     * @param step passo da formattare
+     * @return rappresentazione testuale dettagliata del passo
+     */
+    private String formatResolutionStepDetailed(ResolutionStep step) {
+        String parent1Str = formatClauseForDisplay(step.getParent1());
+        String parent2Str = formatClauseForDisplay(step.getParent2());
+        String childStr = formatClauseForDisplay(step.getChild());
+
+        return String.format("(%s) : (%s) → %s", parent1Str, parent2Str, childStr);
+    }
 
     /**
      * Formatta un singolo passo di risoluzione per visualizzazione leggibile.
@@ -635,7 +558,7 @@ public class ProofGenerator {
         String parent2Str = formatClauseForDisplay(step.getParent2());
         String childStr = formatClauseForDisplay(step.getChild());
 
-        return String.format("(%s) ⊗ (%s) → (%s)", parent1Str, parent2Str, childStr);
+        return String.format("(%s) : (%s) → (%s)", parent1Str, parent2Str, childStr);
     }
 
     /**
@@ -652,23 +575,23 @@ public class ProofGenerator {
     }
 
     /**
-     * Formatta una clausola per visualizzazione nella prova.
+     * Formatta una clausola per visualizzazione nella prova utilizzando nomi originali.
      *
      * Gestisce casi speciali:
-     * - Clausola vuota: simbolo □
+     * - Clausola vuota: simbolo []
      * - Clausola unitaria: singolo letterale
      * - Clausola generale: disgiunzione con simbolo ∨
      *
      * @param clause clausola da formattare
-     * @return rappresentazione testuale della clausola
+     * @return rappresentazione testuale della clausola con nomi originali
      */
     private String formatClauseForDisplay(List<Integer> clause) {
         if (clause == null) {
-            return "∅"; // Clausola null
+            return "(/)"; // Clausola null
         }
 
         if (clause.isEmpty()) {
-            return "□"; // Clausola vuota
+            return "[]"; // Clausola vuota
         }
 
         if (clause.size() == 1) {
@@ -677,7 +600,16 @@ public class ProofGenerator {
 
         // Clausola con multipli letterali: ordina per consistenza
         List<Integer> sortedLiterals = clause.stream()
-                .sorted(Integer::compareTo)
+                .sorted((a, b) -> {
+                    // Ordina prima per variabile, poi per segno
+                    int varA = Math.abs(a);
+                    int varB = Math.abs(b);
+                    if (varA != varB) {
+                        return Integer.compare(varA, varB);
+                    }
+                    // Letterale positivo prima del negativo per la stessa variabile
+                    return Integer.compare(a, b);
+                })
                 .collect(Collectors.toList());
 
         return sortedLiterals.stream()
@@ -686,18 +618,21 @@ public class ProofGenerator {
     }
 
     /**
-     * Formatta un singolo letterale per visualizzazione.
+     * Formatta un singolo letterale per visualizzazione utilizzando nomi originali.
      *
      * @param literal letterale da formattare
-     * @return rappresentazione testuale del letterale
+     * @return rappresentazione testuale del letterale con nome originale
      */
     private String formatLiteral(Integer literal) {
         if (literal == null) return "null";
 
+        int variable = Math.abs(literal);
+        String variableName = variableMapping.getOrDefault(variable, String.valueOf(variable));
+
         if (literal > 0) {
-            return String.valueOf(literal);
+            return variableName;
         } else {
-            return "¬" + Math.abs(literal);
+            return "¬" + variableName;
         }
     }
 
@@ -707,11 +642,6 @@ public class ProofGenerator {
 
     /**
      * Genera automaticamente una prova (metodo di compatibilità).
-     *
-     * Questo metodo mantiene compatibilità con versioni precedenti dell'interfaccia
-     * che potrebbero richiedere generazione automatica basata su clausole fornite.
-     * La logica principale rimane nel metodo generateProof() che utilizza i passi
-     * registrati automaticamente durante l'esecuzione.
      *
      * @param originalClauses clausole originali della formula
      * @param learnedClauses clausole apprese durante la risoluzione
@@ -738,10 +668,6 @@ public class ProofGenerator {
 
     /**
      * Resetta completamente il generatore per una nuova sessione di risoluzione.
-     *
-     * Pulisce tutto lo stato interno preparando il generatore per tracciare
-     * una nuova formula. Questo metodo deve essere chiamato tra risoluzioni
-     * di formule diverse per evitare contaminazione tra prove.
      */
     public void reset() {
         LOGGER.info("Reset ProofGenerator - pulizia stato per nuova sessione");
@@ -749,6 +675,7 @@ public class ProofGenerator {
         // Pulizia strutture dati principali
         resolutionSteps.clear();
         registeredClauseHashes.clear();
+        variableMapping.clear();
 
         // Reset stato di derivazione
         emptyClauseDerivated = false;
@@ -760,9 +687,6 @@ public class ProofGenerator {
     /**
      * Verifica se è stata derivata la clausola vuota durante la sessione corrente.
      *
-     * Questo è l'indicatore principale che la formula è insoddisfacibile secondo
-     * il metodo di risoluzione proposizionale.
-     *
      * @return true se la clausola vuota è stata derivata
      */
     public boolean hasEmptyClause() {
@@ -771,9 +695,6 @@ public class ProofGenerator {
 
     /**
      * Restituisce il numero totale di passi di risoluzione registrati.
-     *
-     * Questo include tutti i passi registrati, prima di qualsiasi ottimizzazione.
-     * Utile per statistiche e analisi delle prestazioni.
      *
      * @return conteggio passi registrati
      */
@@ -871,11 +792,6 @@ public class ProofGenerator {
     // RAPPRESENTAZIONE TESTUALE E DEBUG
     // ========================================
 
-    /**
-     * Genera una rappresentazione testuale completa per debugging.
-     *
-     * @return stringa multi-linea con stato dettagliato del generatore
-     */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -884,6 +800,7 @@ public class ProofGenerator {
         sb.append("  Clausola vuota derivata: ").append(emptyClauseDerivated).append("\n");
         sb.append("  Ottimizzazioni eseguite: ").append(optimizationCount).append("\n");
         sb.append("  Hash registrati: ").append(registeredClauseHashes.size()).append("\n");
+        sb.append("  Variabili mappate: ").append(variableMapping.size()).append("\n");
 
         if (!resolutionSteps.isEmpty()) {
             sb.append("  Primo passo: ").append(formatStepSummary(resolutionSteps.get(0))).append("\n");
@@ -900,8 +817,8 @@ public class ProofGenerator {
      * @return stringa concisa con informazioni essenziali
      */
     public String toCompactString() {
-        return String.format("ProofGen[steps=%d, empty=%s, opts=%d]",
-                resolutionSteps.size(), emptyClauseDerivated, optimizationCount);
+        return String.format("ProofGen[steps=%d, empty=%s, opts=%d, vars=%d]",
+                resolutionSteps.size(), emptyClauseDerivated, optimizationCount, variableMapping.size());
     }
 
     // ========================================
@@ -950,17 +867,6 @@ public class ProofGenerator {
 
     /**
      * Rappresentazione immutabile di un singolo passo di risoluzione.
-     *
-     * Ogni passo rappresenta l'applicazione della regola di risoluzione binaria:
-     * (C1 ∪ {x}) ⊗ (C2 ∪ {¬x}) → (C1 ∪ C2)
-     *
-     * dove:
-     * - parent1 e parent2 sono le clausole input (C1 ∪ {x} e C2 ∪ {¬x})
-     * - child è la clausola risultante (C1 ∪ C2)
-     * - x è il letterale di risoluzione (implicito)
-     *
-     * Thread Safety: Immutabile dopo costruzione
-     * Memory Safety: Copie difensive per prevenire modifiche esterne
      */
     private static class ResolutionStep {
 
@@ -992,10 +898,10 @@ public class ProofGenerator {
          * @param child clausola child risultante (viene copiata difensivamente)
          */
         public ResolutionStep(List<Integer> parent1, List<Integer> parent2, List<Integer> child) {
-            // Copie difensive per immutabilità
-            this.parent1 = parent1 != null ? List.copyOf(parent1) : List.of();
-            this.parent2 = parent2 != null ? List.copyOf(parent2) : List.of();
-            this.child = child != null ? List.copyOf(child) : List.of();
+            // Copie difensive per immutabilità - compatibile SDK 20
+            this.parent1 = parent1 != null ? Collections.unmodifiableList(new ArrayList<>(parent1)) : Collections.emptyList();
+            this.parent2 = parent2 != null ? Collections.unmodifiableList(new ArrayList<>(parent2)) : Collections.emptyList();
+            this.child = child != null ? Collections.unmodifiableList(new ArrayList<>(child)) : Collections.emptyList();
 
             // Pre-calcola hash code per performance
             this.cachedHashCode = Objects.hash(this.parent1, this.parent2, this.child);
@@ -1010,7 +916,7 @@ public class ProofGenerator {
          * @return lista immutabile della prima clausola parent
          */
         public List<Integer> getParent1() {
-            return parent1; // Già immutabile (List.copyOf)
+            return parent1; // Già immutabile (Collections.unmodifiableList)
         }
 
         /**
@@ -1018,7 +924,7 @@ public class ProofGenerator {
          * @return lista immutabile della seconda clausola parent
          */
         public List<Integer> getParent2() {
-            return parent2; // Già immutabile (List.copyOf)
+            return parent2; // Già immutabile (Collections.unmodifiableList)
         }
 
         /**
@@ -1026,7 +932,7 @@ public class ProofGenerator {
          * @return lista immutabile della clausola child
          */
         public List<Integer> getChild() {
-            return child; // Già immutabile (List.copyOf)
+            return child; // Già immutabile (Collections.unmodifiableList)
         }
 
         /**

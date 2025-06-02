@@ -24,8 +24,6 @@ import java.util.logging.Level;
  * - Gestione memoria con prevenzione di memory leak
  * - Logging dettagliato per debugging e analisi prestazioni
  *
- * @version 2.0.0
- * @author Progetto SAT CDCL
  */
 
 // ========================================
@@ -122,7 +120,7 @@ class CNFFormula {
             // Conversione principale dalla rappresentazione ad albero
             performConversionFromCNFConverter(cnfConverter);
 
-            // Finalizzazione e calcolo statistiche
+            // Calcolo delle variabili totali (non le singole occorrenze)
             this.variableCount = variableMapping.size();
 
             // Validazione risultato
@@ -409,7 +407,7 @@ class CNFFormula {
             }
         }
 
-        // Verifica range IDs variabili nelle clausole
+        // Verifica del range degli ID delle variabili nelle clausole
         for (List<Integer> clause : clauses) {
             for (Integer literal : clause) {
                 int absLiteral = Math.abs(literal);
@@ -427,7 +425,10 @@ class CNFFormula {
      * Registra statistiche dettagliate sulla formula convertita.
      */
     private void logFormulaStatistics() {
+        // Si calcolano tutte le occorrenze dei letterali
         int totalLiterals = clauses.stream().mapToInt(List::size).sum();
+
+        // Si calcola la lunghezza media delle clausole
         double avgClauseLength = clauses.isEmpty() ? 0.0 : (double) totalLiterals / clauses.size();
 
         LOGGER.info(String.format("Formula CNF creata: %d clausole, %d variabili, %.1f letterali/clausola media",

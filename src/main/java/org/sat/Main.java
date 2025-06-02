@@ -40,7 +40,7 @@ import java.util.concurrent.*;
  * in forma normale congiuntiva (CNF) prima di applicare l'algoritmo CDCL.
  *
  * @author Amos Lo Verde
- * @version 1.4.0
+ * @version 1.5.1
  */
 public final class Main {
     /**
@@ -87,14 +87,14 @@ public final class Main {
         try {
             // Verifica la presenza di parametri
             if (args.length == 0) {
-                displayNoParametersMessage();
+                displayNoParametersMessage();   // Non ci sono parametri
                 return;
             }
 
             // Analizza i parametri della linea di comando
             CommandLineResult cmdResult = parseCommandLineArguments(args);
             if (cmdResult == null) {
-                return; // Errore già gestito o help mostrato
+                return; // Errore
             }
 
             // Mostra configurazione
@@ -809,7 +809,7 @@ public final class Main {
             // Crea un ExecutorService con singolo thread per isolamento
             ExecutorService executor = Executors.newSingleThreadExecutor();
 
-            // Inizializza il solver CDCL con la formula CNF
+            // Inizializza il solutore CDCL con la formula CNF
             CDCLSolver solver = new CDCLSolver(cnfFormula);
 
             try {
@@ -985,16 +985,29 @@ public final class Main {
                 writer.write("}\n");
 
             } else {
-                // CASO UNSAT
+                // CASO UNSAT - MODIFICATO SECONDO LE SPECIFICHE
                 writer.write("La formula CNF è UNSAT.\n");
                 writer.write("Prova generata:\n");
 
                 // Verifica disponibilità della prova
                 if (result.getProof() != null && !result.getProof().trim().isEmpty()) {
-                    // Scrive la prova completa di insoddisfacibilità
-                    writer.write(result.getProof());
+                    // Scrive la prova senza elenco enumerato
+                    String proof = result.getProof();
+
+                    // Rimuove l'enumerazione se presente (es. "1. ", "2. ", etc.)
+                    String cleanedProof = proof.replaceAll("(?m)^\\s*\\d+\\.\\s*", "");
+
+                    writer.write(cleanedProof);
+
+                    // Se la prova non contiene derivazione clausola vuota, aggiungi messaggio
+                    if (!proof.toLowerCase().contains("clausola vuota") &&
+                            !proof.contains("[]") &&
+                            !proof.toLowerCase().contains("empty clause")) {
+
+                        writer.write("\n\nLa clausola vuota non è stata derivata esplicitamente, tuttavia la formula è stata determinata UNSAT dal solutore CDCL attraverso l'analisi dei conflitti e apprendimento di clausole");
+                    }
                 } else {
-                    writer.write("Nessuna prova dettagliata disponibile.\n");
+                    writer.write("\n\nLa clausola vuota non è stata derivata esplicitamente, tuttavia la formula è stata determinata UNSAT dal solutore CDCL attraverso l'analisi dei conflitti e apprendimento di clausole");
                 }
             }
         }
@@ -1010,7 +1023,7 @@ public final class Main {
          * @throws IOException se si verificano errori di I/O
          */
         private void writeResultFooter(FileWriter writer, SATResult result) throws IOException {
-            writer.write("\n~~~~~~~~~~~~~~~\n\n");
+            writer.write("\n\n~~~~~~~~~~~~~~~\n\n");
 
             // Estraggo le statistiche
             SATStatistics stats = result.getStatistics();

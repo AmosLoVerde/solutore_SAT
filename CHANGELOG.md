@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.5.1] - 2025-06-02
+### Fixed
+- Migliorata la generazione della prova nel modulo CDCL:
+  ora la costruzione delle clausole apprese è più accurata e coerente.
+  Ulteriori raffinamenti sono ancora possibili.
+
+
 ## [1.5.0] - 2025-06-01
 ### Added
 - Prima versione dell'algoritmo CDCL con supporto per:
