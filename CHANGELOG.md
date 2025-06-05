@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.5.2] - 2025-06-05
+### Fixed
+- Ulteriore miglioramento della generazione della prova all’interno del solver CDCL.
+  La logica di costruzione è ora più coerente e robusta, anche se potrà ancora essere
+  raffinata in release successive.
+
+
 ## [1.5.1] - 2025-06-02
 ### Fixed
 - Migliorata la generazione della prova nel modulo CDCL:

@@ -5,231 +5,162 @@ import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
-/**
- * Classi di supporto per il solutore SAT CDCL.
- *
- * Questo modulo fornisce le strutture dati fondamentali per l'implementazione
- * dell'algoritmo CDCL (Conflict-Driven Clause Learning), ottimizzate per
- * prestazioni ed efficienza di memoria.
- *
- * Componenti Principali:
- * - CNFFormula: Rappresentazione interna ottimizzata delle formule CNF
- * - AssignedLiteral: Modello per letterali assegnati con metadata di tracciamento
- * - DecisionStack: Stack gerarchico per gestione livelli di decisione e backtracking
- * - Classi di risultato: Encapsulation dei risultati delle operazioni CDCL
- *
- * Ottimizzazioni Implementate:
- * - Mapping efficiente variabili simboliche → identificatori numerici
- * - Strutture dati a accesso O(1) per operazioni critiche
- * - Gestione memoria con prevenzione di memory leak
- * - Logging dettagliato per debugging e analisi prestazioni
- *
- */
 
-// ========================================
-// RAPPRESENTAZIONE FORMULA CNF
-// ========================================
+//region RAPPRESENTAZIONE FORMULA CNF OTTIMIZZATA
 
 /**
- * Rappresentazione interna ottimizzata di una formula in forma normale congiuntiva (CNF).
- *
- * Questa classe converte la rappresentazione ad albero di CNFConverter in una struttura
- * dati ottimizzata per l'algoritmo CDCL, utilizzando identificatori numerici per
- * le variabili e liste di interi per le clausole.
- *
- * Vantaggi della Rappresentazione:
- * - Accesso O(1) alle clausole
- * - Rappresentazione compatta in memoria
- * - Operazioni arithmetiche veloci sui letterali
- * - Mapping bidirezionale variabili simboliche ↔ numeriche
- *
- * Formato Interno:
- * - Clausole: List<List<Integer>> dove ogni Integer rappresenta un letterale
- * - Letterali positivi: numeri positivi (es. 5 = variabile 5 vera)
- * - Letterali negativi: numeri negativi (es. -5 = variabile 5 falsa)
- * - Mapping: "P" → 1, "Q" → 2, etc.
+ * Converte la rappresentazione ad albero CNFConverter in una struttura dati
+ * ottimizzata per l'algoritmo CDCL. Si utilizzano identificatori numerici
+ * per le variabili e rappresentazioni compatte per le clausole.
  */
 class CNFFormula {
 
-    // ========================================
-    // LOGGING E COSTANTI
-    // ========================================
-
-    /** Logger dedicato per tracciamento operazioni della formula CNF */
     private static final Logger LOGGER = Logger.getLogger(CNFFormula.class.getName());
 
-    /** Messaggio di warning per letterali non riconosciuti durante la conversione */
-    private static final String UNRECOGNIZED_LITERAL_WARNING = "Letterale non riconosciuto durante conversione: ";
-
-    // ========================================
-    // STRUTTURE DATI PRINCIPALI
-    // ========================================
+    //region STRUTTURE DATI PRINCIPALI
 
     /**
-     * Lista delle clausole della formula CNF.
-     * Ogni clausola è rappresentata come List<Integer> di letterali.
-     * Esempio: [[1, -2], [2, 3]] rappresenta (P ∨ ¬Q) ∧ (Q ∨ R)
+     * Clausole della formula CNF in formato ottimizzato.
+     * Ogni clausola è List<Integer> dove ogni Integer è un letterale.
+     * Invariante: lista immutabile dopo costruzione
      */
     private final List<List<Integer>> clauses;
 
     /**
      * Numero totale di variabili distinte nella formula.
-     * Corrisponde alla dimensione del dominio delle variabili [1..variableCount].
+     * Corrisponde al massimo ID variabile assegnato.
      */
     private final int variableCount;
 
     /**
-     * Mapping bidirezionale da nomi simbolici a identificatori numerici.
-     * Chiave: nome simbolico (es. "P", "Q", "var1")
-     * Valore: identificatore numerico univoco (es. 1, 2, 3)
-     *
-     * Invariante: ogni nome simbolico ha un ID univoco ≥ 1
+     * Mapping bidirezionale: nome simbolico → ID numerico.
+     * Mantiene tracciabilità per debugging e generazione output.
+     * Invariante: ogni nome ha ID univoco ≥ 1
      */
     private final Map<String, Integer> variableMapping;
 
-    // ========================================
-    // COSTRUZIONE E INIZIALIZZAZIONE
-    // ========================================
+    //endregion
+
+
+    //region COSTRUZIONE E CONVERSIONE
 
     /**
-     * Costruisce una rappresentazione CNF ottimizzata dalla rappresentazione ad albero.
+     * Costruisce formula CNF ottimizzata da rappresentazione ad albero.
      *
-     * Il processo di conversione comprende:
-     * 1. Attraversamento ricorsivo dell'albero CNFConverter
-     * 2. Estrazione e catalogazione di tutte le variabili simboliche
-     * 3. Assegnazione di identificatori numerici univoci
-     * 4. Conversione delle clausole in formato List<Integer>
-     * 5. Validazione dell'integrità della rappresentazione risultante
-     *
-     * @param cnfConverter formula CNF in formato albero da convertire
-     * @throws IllegalArgumentException se la formula è malformata o nulla
+     * @param cnfConverter formula CNF in formato albero
+     * @throws IllegalArgumentException se formula malformata
+     * @throws RuntimeException se errori durante conversione
      */
     public CNFFormula(CNFConverter cnfConverter) {
-        // Validazione input
         if (cnfConverter == null) {
             throw new IllegalArgumentException("CNFConverter non può essere null");
         }
 
-        LOGGER.info("=== INIZIO CONVERSIONE FORMULA CNF ===");
+        LOGGER.info("=== CONVERSIONE FORMULA CNF ===");
 
         // Inizializzazione strutture dati
         this.clauses = new ArrayList<>();
-        this.variableMapping = new LinkedHashMap<>(); // Mantiene ordine di inserimento per determinismo
+        this.variableMapping = new LinkedHashMap<>(); // Mantiene ordine inserimento
 
         try {
-            // Conversione principale dalla rappresentazione ad albero
-            performConversionFromCNFConverter(cnfConverter);
+            // Conversione principale
+            performConversionFromTree(cnfConverter);
 
-            // Calcolo delle variabili totali (non le singole occorrenze)
+            // Finalizzazione
             this.variableCount = variableMapping.size();
-
-            // Validazione risultato
-            validateConversionResult();
-
-            // Logging informazioni formula
-            logFormulaStatistics();
+            validateConversionIntegrity();
+            logConversionStatistics();
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Errore durante conversione CNF", e);
-            throw new RuntimeException("Fallita conversione formula CNF: " + e.getMessage(), e);
+            LOGGER.log(Level.SEVERE, "Errore conversione CNF", e);
+            throw new RuntimeException("Conversione CNF fallita: " + e.getMessage(), e);
         }
 
-        LOGGER.info("=== CONVERSIONE CNF COMPLETATA CON SUCCESSO ===");
+        LOGGER.info("=== CONVERSIONE CNF COMPLETATA ===");
     }
 
-    // ========================================
-    // CONVERSIONE DALLA RAPPRESENTAZIONE AD ALBERO
-    // ========================================
-
     /**
-     * Esegue la conversione principale dalla rappresentazione CNFConverter.
-     *
-     * Gestisce due casi principali:
-     * - Formula AND: congiunzione di multiple clausole
-     * - Formula semplice: singola clausola o letterale
-     *
-     * @param converter nodo radice della rappresentazione ad albero
+     * Esegue la conversione principale dall'albero CNFConverter.
+     * Gestisce sia formule complesse (AND di clausole) che semplici (clausola singola).
      */
-    private void performConversionFromCNFConverter(CNFConverter converter) {
-        LOGGER.fine("Inizio conversione da CNFConverter tipo: " + converter.type);
+    private void performConversionFromTree(CNFConverter converter) {
+        LOGGER.fine("Conversione da tipo: " + converter.type);
 
-        if (converter.type == CNFConverter.Type.AND) {
-            // Caso 1: Formula complessa - congiunzione di clausole
-            processConjunctionOfClauses(converter);
-        } else {
-            // Caso 2: Formula semplice - singola clausola o letterale
-            processSingleClause(converter);
+        switch (converter.type) {
+            case AND:
+                // Formula complessa: congiunzione di clausole multiple
+                processConjunctionOfClauses(converter);
+                break;
+
+            default:
+                // Formula semplice: clausola singola o letterale
+                processSingleClause(converter);
+                break;
         }
 
-        LOGGER.fine("Conversione completata - clausole estratte: " + clauses.size());
+        LOGGER.fine("Clausole estratte: " + clauses.size());
     }
 
     /**
-     * Processa una congiunzione di clausole (formula complessa).
-     *
-     * @param conjunctionNode nodo AND contenente le clausole operando
+     * Processa congiunzione di clausole (nodo AND con operandi multipli).
+     * Ogni operando rappresenta una clausola da convertire separatamente.
      */
     private void processConjunctionOfClauses(CNFConverter conjunctionNode) {
         if (conjunctionNode.operands == null || conjunctionNode.operands.isEmpty()) {
-            LOGGER.warning("Nodo AND senza operandi - formula vuota");
+            LOGGER.warning("Nodo AND vuoto - formula senza clausole");
             return;
         }
 
-        LOGGER.fine("Processando congiunzione con " + conjunctionNode.operands.size() + " clausole");
+        LOGGER.fine("Processando " + conjunctionNode.operands.size() + " clausole");
 
-        // Processa ogni clausola della congiunzione
         for (CNFConverter clauseNode : conjunctionNode.operands) {
             List<Integer> convertedClause = convertSingleClause(clauseNode);
-
             if (isValidClause(convertedClause)) {
                 clauses.add(convertedClause);
-                LOGGER.finest("Aggiunta clausola: " + convertedClause);
-            } else {
-                LOGGER.warning("Clausola scartata (vuota o non valida): " + clauseNode);
+                LOGGER.finest("Clausola aggiunta: " + convertedClause);
             }
         }
     }
 
     /**
-     * Processa una formula semplice (singola clausola).
-     *
-     * @param singleNode nodo rappresentante la clausola singola
+     * Processa clausola singola (letterale o disgiunzione).
      */
     private void processSingleClause(CNFConverter singleNode) {
-        LOGGER.fine("Processando clausola singola di tipo: " + singleNode.type);
-
         List<Integer> convertedClause = convertSingleClause(singleNode);
-
         if (isValidClause(convertedClause)) {
             clauses.add(convertedClause);
-            LOGGER.fine("Aggiunta clausola singola: " + convertedClause);
-        } else {
-            LOGGER.warning("Clausola singola scartata (non valida)");
+            LOGGER.fine("Clausola singola aggiunta: " + convertedClause);
         }
     }
 
+    //endregion
+
+
+    //region CONVERSIONE CLAUSOLE E LETTERALI
+
     /**
-     * Converte una singola clausola dalla rappresentazione ad albero.
+     * Converte una singola clausola da nodo albero a rappresentazione numerica.
      *
-     * Gestisce i tipi di clausola:
-     * - OR: disgiunzione di letterali (clausola normale)
-     * - ATOM/NOT: letterale singolo (clausola unitaria)
+     * TIPI GESTITI:
+     * - OR: disgiunzione di letterali → clausola normale
+     * - ATOM: variabile atomica → clausola unitaria positiva
+     * - NOT: negazione variabile → clausola unitaria negativa
      *
      * @param clauseNode nodo rappresentante la clausola
-     * @return lista di letterali convertiti
+     * @return lista letterali convertiti (vuota se conversione fallisce)
      */
     private List<Integer> convertSingleClause(CNFConverter clauseNode) {
         List<Integer> literals = new ArrayList<>();
 
         switch (clauseNode.type) {
             case OR:
-                // Clausola con multipli letterali
-                literals = convertDisjunctionClause(clauseNode);
+                // Clausola normale: disgiunzione di letterali
+                literals = convertDisjunctionToLiterals(clauseNode);
                 break;
 
             case ATOM:
             case NOT:
-                // Clausola unitaria (singolo letterale)
+                // Clausola unitaria: singolo letterale
                 Integer literal = convertSingleLiteral(clauseNode);
                 if (literal != null) {
                     literals.add(literal);
@@ -245,12 +176,10 @@ class CNFFormula {
     }
 
     /**
-     * Converte una clausola di tipo OR (disgiunzione di letterali).
-     *
-     * @param orNode nodo OR contenente i letterali operando
-     * @return lista dei letterali convertiti
+     * Converte nodo OR (disgiunzione) in lista di letterali.
+     * Ogni operando del nodo OR diventa un letterale nella clausola risultante.
      */
-    private List<Integer> convertDisjunctionClause(CNFConverter orNode) {
+    private List<Integer> convertDisjunctionToLiterals(CNFConverter orNode) {
         List<Integer> literals = new ArrayList<>();
 
         if (orNode.operands == null) {
@@ -258,9 +187,8 @@ class CNFFormula {
             return literals;
         }
 
-        LOGGER.finest("Convertendo disgiunzione con " + orNode.operands.size() + " letterali");
+        LOGGER.finest("Convertendo " + orNode.operands.size() + " letterali");
 
-        // Converte ogni letterale della disgiunzione
         for (CNFConverter literalNode : orNode.operands) {
             Integer convertedLiteral = convertSingleLiteral(literalNode);
             if (convertedLiteral != null) {
@@ -274,72 +202,54 @@ class CNFFormula {
     /**
      * Converte un singolo letterale in rappresentazione numerica.
      *
-     * Gestisce i casi:
-     * - ATOM: letterale positivo (es. P → 1)
-     * - NOT ATOM: letterale negativo (es. ¬P → -1)
+     * CONVERSIONE:
+     * - ATOM "P" → +ID (letterale positivo)
+     * - NOT ATOM "¬P" → -ID (letterale negativo)
      *
      * @param literalNode nodo rappresentante il letterale
-     * @return identificatore numerico del letterale (positivo/negativo) o null se non convertibile
+     * @return ID numerico del letterale (null se non convertibile)
      */
     private Integer convertSingleLiteral(CNFConverter literalNode) {
         switch (literalNode.type) {
             case ATOM:
-                // Letterale positivo: P → ID_P
                 return convertPositiveLiteral(literalNode);
 
             case NOT:
-                // Letterale negativo: ¬P → -ID_P
                 return convertNegativeLiteral(literalNode);
 
             default:
-                LOGGER.warning(UNRECOGNIZED_LITERAL_WARNING + literalNode.type);
+                LOGGER.warning("Tipo letterale non riconosciuto: " + literalNode.type);
                 return null;
         }
     }
 
     /**
-     * Converte un letterale positivo (variabile atomica).
-     *
-     * @param atomNode nodo ATOM contenente il nome della variabile
-     * @return identificatore numerico positivo della variabile
+     * Converte letterale positivo (variabile atomica).
+     * Estrae nome variabile e assegna/recupera ID numerico.
      */
     private Integer convertPositiveLiteral(CNFConverter atomNode) {
-        if (atomNode.atom == null || atomNode.atom.trim().isEmpty()) {
-            LOGGER.warning("Nome variabile vuoto o null in nodo ATOM");
-            return null;
-        }
+        String variableName = extractVariableName(atomNode.atom);
+        if (variableName == null) return null;
 
-        String variableName = atomNode.atom.trim();
         Integer variableId = getOrCreateVariableId(variableName);
-
         LOGGER.finest("Letterale positivo: " + variableName + " → " + variableId);
         return variableId;
     }
 
     /**
-     * Converte un letterale negativo (negazione di variabile atomica).
-     *
-     * @param notNode nodo NOT contenente la variabile da negare
-     * @return identificatore numerico negativo della variabile
+     * Converte letterale negativo (NOT di variabile atomica).
+     * Verifica struttura NOT(ATOM) e restituisce ID negativo.
      */
     private Integer convertNegativeLiteral(CNFConverter notNode) {
-        // Verifica struttura NOT(ATOM)
-        if (notNode.operand == null) {
-            LOGGER.warning("Nodo NOT senza operando");
+        // Validazione struttura NOT(ATOM)
+        if (notNode.operand == null || notNode.operand.type != CNFConverter.Type.ATOM) {
+            LOGGER.warning("Struttura NOT non valida");
             return null;
         }
 
-        if (notNode.operand.type != CNFConverter.Type.ATOM) {
-            LOGGER.warning("NOT applicato a non-ATOM: " + notNode.operand.type);
-            return null;
-        }
+        String variableName = extractVariableName(notNode.operand.atom);
+        if (variableName == null) return null;
 
-        if (notNode.operand.atom == null || notNode.operand.atom.trim().isEmpty()) {
-            LOGGER.warning("Nome variabile vuoto in NOT(ATOM)");
-            return null;
-        }
-
-        String variableName = notNode.operand.atom.trim();
         Integer variableId = getOrCreateVariableId(variableName);
         Integer negatedId = -variableId;
 
@@ -347,54 +257,63 @@ class CNFFormula {
         return negatedId;
     }
 
-    // ========================================
-    // GESTIONE MAPPING VARIABILI
-    // ========================================
+    //endregion
+
+
+    //region GESTIONE MAPPING VARIABILI
 
     /**
-     * Ottiene l'identificatore numerico di una variabile, creandolo se necessario.
-     *
-     * Questo metodo implementa il mapping lazy: gli identificatori vengono assegnati
-     * progressivamente nell'ordine di primo incontro delle variabili.
-     *
-     * @param variableName nome simbolico della variabile
-     * @return identificatore numerico univoco (sempre > 0)
+     * Estrae e valida nome variabile da stringa atomica.
+     * Rimuove spazi e verifica che non sia vuota.
      */
-    private Integer getOrCreateVariableId(String variableName) {
-        // Usa computeIfAbsent per atomicità e efficienza
-        Integer variableId = variableMapping.computeIfAbsent(variableName, name -> {
-            int newId = variableMapping.size() + 1;
-            LOGGER.finest("Nuova variabile mappata: " + name + " → " + newId);
-            return newId;
-        });
-
-        return variableId;
+    private String extractVariableName(String atom) {
+        if (atom == null || atom.trim().isEmpty()) {
+            LOGGER.warning("Nome variabile vuoto o null");
+            return null;
+        }
+        return atom.trim();
     }
 
-    // ========================================
-    // VALIDAZIONE E DIAGNOSTICA
-    // ========================================
+    /**
+     * Ottiene ID numerico per variabile, creandolo se necessario.
+     * Implementa mapping lazy con assegnazione progressiva.
+     *
+     * ALGORITMO:
+     * 1. Se variabile già mappata → restituisce ID esistente
+     * 2. Se variabile nuova → assegna prossimo ID disponibile
+     * 3. Aggiorna mapping e registra nel log
+     *
+     * @param variableName nome simbolico della variabile
+     * @return ID numerico univoco (sempre > 0)
+     */
+    private Integer getOrCreateVariableId(String variableName) {
+        return variableMapping.computeIfAbsent(variableName, name -> {
+            int newId = variableMapping.size() + 1;
+            LOGGER.finest("Nuova variabile: " + name + " → " + newId);
+            return newId;
+        });
+    }
+
+    //endregion
+
+
+    //region VALIDAZIONE E STATISTICHE
 
     /**
-     * Verifica se una clausola convertita è valida.
-     *
-     * @param clause clausola da validare
-     * @return true se la clausola è valida (non null e non vuota)
+     * Verifica se una clausola convertita è valida per inclusione.
      */
     private boolean isValidClause(List<Integer> clause) {
         return clause != null && !clause.isEmpty();
     }
 
     /**
-     * Valida il risultato della conversione per detectare inconsistenze.
-     *
-     * @throws IllegalStateException se la conversione ha prodotto risultati inconsistenti
+     * Valida integrità della conversione completata.
+     * Verifica consistenza tra strutture dati e assenza di corruzioni.
      */
-    private void validateConversionResult() {
+    private void validateConversionIntegrity() {
         // Verifica coerenza conteggio variabili
         if (variableCount != variableMapping.size()) {
-            throw new IllegalStateException("Inconsistenza nel conteggio variabili: " +
-                    variableCount + " != " + variableMapping.size());
+            throw new IllegalStateException("Inconsistenza conteggio variabili");
         }
 
         // Verifica integrità mapping
@@ -407,40 +326,33 @@ class CNFFormula {
             }
         }
 
-        // Verifica del range degli ID delle variabili nelle clausole
+        // Verifica range letterali nelle clausole
         for (List<Integer> clause : clauses) {
             for (Integer literal : clause) {
                 int absLiteral = Math.abs(literal);
                 if (absLiteral <= 0 || absLiteral > variableCount) {
-                    throw new IllegalStateException("Letterale fuori range: " + literal +
-                            " (range valido: 1-" + variableCount + ")");
+                    throw new IllegalStateException("Letterale fuori range: " + literal);
                 }
             }
         }
 
-        LOGGER.fine("Validazione conversione CNF: SUCCESSO");
+        LOGGER.fine("Validazione conversione: SUCCESSO");
     }
 
     /**
-     * Registra statistiche dettagliate sulla formula convertita.
+     * Registra statistiche dettagliate sulla conversione completata.
      */
-    private void logFormulaStatistics() {
-        // Si calcolano tutte le occorrenze dei letterali
+    private void logConversionStatistics() {
         int totalLiterals = clauses.stream().mapToInt(List::size).sum();
-
-        // Si calcola la lunghezza media delle clausole
         double avgClauseLength = clauses.isEmpty() ? 0.0 : (double) totalLiterals / clauses.size();
 
-        LOGGER.info(String.format("Formula CNF creata: %d clausole, %d variabili, %.1f letterali/clausola media",
+        LOGGER.info(String.format("Formula convertita: %d clausole, %d variabili, %.1f letterali/clausola",
                 clauses.size(), variableCount, avgClauseLength));
 
-        // Log mapping variabili per debugging
-        if (LOGGER.isLoggable(Level.FINE)) {
-            LOGGER.fine("Mapping variabili: " + variableMapping);
-        }
-
-        // Log distribuzione lunghezza clausole per analisi
+        // Log dettagliato per debugging
         if (LOGGER.isLoggable(Level.FINEST)) {
+            LOGGER.finest("Mapping variabili: " + variableMapping);
+
             Map<Integer, Long> lengthDistribution = clauses.stream()
                     .collect(java.util.stream.Collectors.groupingBy(
                             List::size, java.util.stream.Collectors.counting()));
@@ -448,92 +360,67 @@ class CNFFormula {
         }
     }
 
-    // ========================================
-    // INTERFACCIA PUBBLICA
-    // ========================================
+    //endregion
+
+
+    //region INTERFACCIA PUBBLICA
 
     /**
-     * Restituisce la lista immutabile delle clausole.
-     *
-     * @return copia difensiva delle clausole per prevenire modifiche esterne
+     * @return copia immutabile delle clausole CNF
      */
     public List<List<Integer>> getClauses() {
         return new ArrayList<>(clauses);
     }
 
     /**
-     * Restituisce il numero totale di variabili distinte.
-     *
-     * @return conteggio variabili (sempre ≥ 0)
+     * @return numero di variabili distinte nella formula
      */
     public int getVariableCount() {
         return variableCount;
     }
 
     /**
-     * Restituisce il numero totale di clausole.
-     *
-     * @return conteggio clausole (sempre ≥ 0)
+     * @return numero di clausole nella formula
      */
     public int getClausesCount() {
         return clauses.size();
     }
 
     /**
-     * Restituisce il mapping da nomi simbolici a identificatori numerici.
-     *
-     * @return copia difensiva del mapping per prevenire modifiche esterne
+     * @return copia immutabile del mapping variabili
      */
     public Map<String, Integer> getVariableMapping() {
         return new LinkedHashMap<>(variableMapping);
     }
 
-    /**
-     * Rappresentazione testuale della formula per debugging.
-     *
-     * @return stringa descrittiva con statistiche e contenuto della formula
-     */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("CNFFormula{");
-        sb.append("clausole=").append(clauses.size());
-        sb.append(", variabili=").append(variableCount);
-        sb.append(", mapping=").append(variableMapping);
-        sb.append(", clausole=").append(clauses);
-        sb.append('}');
-        return sb.toString();
+        return String.format("CNFFormula{clausole=%d, variabili=%d, mapping=%s}",
+                clauses.size(), variableCount, variableMapping);
     }
+
+    //endregion
 }
 
-// ========================================
-// MODELLO LETTERALE ASSEGNATO
-// ========================================
+//endregion
+
+
+//region MODELLO LETTERALE ASSEGNATO CON METADATA
 
 /**
- * Rappresenta un letterale (variabile) assegnato durante il processo CDCL.
+ * Si rappresenta una variabile assegnata con metadata completi:
+ * incapsula tutte le informazioni necessarie per il tracking di un assegnamento
+ * durante l'algoritmo CDCL. Inoltre fornisce supporto per backtracking e
+ * analisi dei conflitti attraverso i metadata dettagliati.
  *
- * Questa classe incapsula tutte le informazioni necessarie per il tracking
- * di un assegnamento di variabile, inclusi metadata per backtracking e
- * analisi dei conflitti.
- *
- * Informazioni Tracciate:
- * - Identità della variabile e valore assegnato
- * - Tipo di assegnamento (decisione vs. implicazione)
- * - Clausola ancestrale (per implicazioni)
- * - Metadata per debugging e analisi
- *
- * Thread Safety: Immutabile dopo costruzione
  */
 class AssignedLiteral {
 
-    // ========================================
-    // ATTRIBUTI PRINCIPALI
-    // ========================================
+    //region ATTRIBUTI CORE DELL'ASSEGNAMENTO
 
     /**
-     * Identificatore numerico della variabile assegnata.
-     * Corrisponde agli ID generati dalla CNFFormula (sempre > 0).
+     * ID numerico della variabile assegnata.
+     * Corrisponde agli ID generati da CNFFormula (sempre > 0).
      */
     private final Integer variable;
 
@@ -544,36 +431,47 @@ class AssignedLiteral {
     private final Boolean value;
 
     /**
-     * Flag che indica il tipo di assegnamento.
-     * true = decisione (scelta del solver), false = implicazione (dedotta da propagazione)
+     * Tipo di assegnamento distingue decisioni da implicazioni.
+     * true = decisione euristica, false = implicazione unit propagation
      */
     private final Boolean isDecision;
 
     /**
-     * Clausola che ha causato questa implicazione (null per decisioni).
-     * Utilizzata per analisi conflitti e generazione prove.
-     * Formato: List<Integer> di letterali (esempio: [1, -2, 3])
+     * Clausola che ha causato questa implicazione.
+     * null per decisioni, richiesta per implicazioni.
+     * Usata per conflict analysis e generazione prove.
      */
     private final List<Integer> ancestorClause;
 
-    // ========================================
-    // COSTRUZIONE
-    // ========================================
+    //endregion
+
+
+    //region COSTRUZIONE CON VALIDAZIONE
 
     /**
-     * Costruisce un nuovo letterale assegnato con metadata completi.
+     * Costruisce letterale assegnato con validazione completa dei parametri.
      *
-     * @param variable identificatore numerico della variabile (deve essere > 0)
+     * VALIDAZIONI APPLICATE:
+     * - Variable ID deve essere > 0 (range valido)
+     * - Value non può essere null (assegnamento completo)
+     * - IsDecision non può essere null (tipo definito)
+     * - Implicazioni richiedono clausola ancestrale non vuota
+     * - Decisioni non dovrebbero avere clausola ancestrale
+     *
+     * @param variable ID numerico variabile (> 0)
      * @param value valore booleano assegnato
-     * @param isDecision true se è una decisione, false se è un'implicazione
-     * @param ancestorClause clausola causante (richiesta per implicazioni, null per decisioni)
-     * @throws IllegalArgumentException se i parametri sono inconsistenti
+     * @param isDecision true se decisione, false se implicazione
+     * @param ancestorClause clausola causante (richiesta per implicazioni)
+     * @throws IllegalArgumentException se parametri inconsistenti
      */
     public AssignedLiteral(Integer variable, Boolean value, Boolean isDecision, List<Integer> ancestorClause) {
-        // Validazione parametri
-        validateConstructorParameters(variable, value, isDecision, ancestorClause);
+        // Validazione parametri di base
+        validateBasicParameters(variable, value, isDecision);
 
-        // Assegnazione con copia difensiva per immutabilità
+        // Validazione coerenza tipo-clausola
+        validateTypeClauseConsistency(isDecision, ancestorClause);
+
+        // Assegnazione con copia difensiva
         this.variable = variable;
         this.value = value;
         this.isDecision = isDecision;
@@ -581,113 +479,82 @@ class AssignedLiteral {
     }
 
     /**
-     * Valida i parametri del costruttore per garantire coerenza.
-     *
-     * @param variable identificatore variabile
-     * @param value valore assegnato
-     * @param isDecision tipo assegnamento
-     * @param ancestorClause clausola ancestrale
-     * @throws IllegalArgumentException se i parametri sono inconsistenti
+     * Valida parametri di base per consistenza.
      */
-    private void validateConstructorParameters(Integer variable, Boolean value, Boolean isDecision, List<Integer> ancestorClause) {
+    private void validateBasicParameters(Integer variable, Boolean value, Boolean isDecision) {
         if (variable == null || variable <= 0) {
-            throw new IllegalArgumentException("Variable ID deve essere > 0, ricevuto: " + variable);
+            throw new IllegalArgumentException("Variable ID deve essere > 0: " + variable);
         }
-
         if (value == null) {
             throw new IllegalArgumentException("Value non può essere null");
         }
-
         if (isDecision == null) {
             throw new IllegalArgumentException("IsDecision non può essere null");
         }
+    }
 
-        // Verifica coerenza: implicazioni devono avere clausola ancestrale
+    /**
+     * Valida coerenza tra tipo assegnamento e clausola ancestrale.
+     */
+    private void validateTypeClauseConsistency(Boolean isDecision, List<Integer> ancestorClause) {
         if (!isDecision && (ancestorClause == null || ancestorClause.isEmpty())) {
-            throw new IllegalArgumentException("Implicazioni richiedono clausola ancestrale non vuota");
+            throw new IllegalArgumentException("Implicazioni richiedono clausola ancestrale");
         }
-
-        // Verifica coerenza: decisioni non dovrebbero avere clausola ancestrale
         if (isDecision && ancestorClause != null && !ancestorClause.isEmpty()) {
             throw new IllegalArgumentException("Decisioni non dovrebbero avere clausola ancestrale");
         }
     }
 
-    // ========================================
-    // INTERFACCIA PUBBLICA
-    // ========================================
+    //endregion
 
-    /**
-     * Restituisce l'identificatore numerico della variabile.
-     *
-     * @return ID variabile (sempre > 0)
-     */
+
+    //region INTERFACCIA PUBBLICA ACCESSORS
+
+    /** @return ID numerico della variabile */
     public Integer getVariable() {
         return variable;
     }
 
-    /**
-     * Restituisce il valore booleano assegnato.
-     *
-     * @return true se variabile vera, false se falsa
-     */
+    /** @return valore booleano assegnato */
     public Boolean getValue() {
         return value;
     }
 
-    /**
-     * Verifica se questo assegnamento è una decisione.
-     *
-     * @return true se decisione del solver, false se implicazione
-     */
+    /** @return true se assegnamento è decisione euristica */
     public Boolean isDecision() {
         return isDecision;
     }
 
-    /**
-     * Verifica se questo assegnamento è un'implicazione.
-     *
-     * @return true se implicazione, false se decisione
-     */
+    /** @return true se assegnamento è implicazione unit propagation */
     public Boolean isImplication() {
         return !isDecision;
     }
 
-    /**
-     * Restituisce la clausola che ha causato questa implicazione.
-     *
-     * @return copia difensiva della clausola ancestrale, null per decisioni
-     */
+    /** @return copia difensiva clausola ancestrale (null per decisioni) */
     public List<Integer> getAncestorClause() {
         return ancestorClause != null ? new ArrayList<>(ancestorClause) : null;
     }
 
-    /**
-     * Verifica se questo assegnamento ha una clausola ancestrale.
-     *
-     * @return true se esiste clausola ancestrale
-     */
+    /** @return true se esiste clausola ancestrale */
     public boolean hasAncestorClause() {
         return ancestorClause != null && !ancestorClause.isEmpty();
     }
 
+    //endregion
+
+
+    //region UTILITÀ E CONVERSIONI
+
     /**
-     * Genera rappresentazione del letterale nel formato standard DIMACS.
-     *
-     * @return letterale in formato DIMACS (positivo/negativo)
+     * Converte in letterale DIMACS standard.
+     * @return ID positivo se true, negativo se false
      */
     public Integer toDIMACSLiteral() {
         return value ? variable : -variable;
     }
 
-    // ========================================
-    // UTILITÀ E DEBUGGING
-    // ========================================
-
     /**
-     * Rappresentazione testuale dettagliata per debugging.
-     *
-     * @return stringa descrittiva con tutti i dettagli del letterale
+     * Rappresentazione testuale per debugging con tutti i dettagli.
      */
     @Override
     public String toString() {
@@ -706,10 +573,7 @@ class AssignedLiteral {
     }
 
     /**
-     * Confronto per uguaglianza basato su variabile e valore.
-     *
-     * @param obj oggetto da confrontare
-     * @return true se rappresentano lo stesso assegnamento
+     * Uguaglianza basata su variabile e valore (ignora tipo e clausola).
      */
     @Override
     public boolean equals(Object obj) {
@@ -722,278 +586,245 @@ class AssignedLiteral {
                 Objects.equals(isDecision, that.isDecision);
     }
 
-    /**
-     * Hash code basato su variabile, valore e tipo.
-     *
-     * @return hash code per uso in collezioni
-     */
     @Override
     public int hashCode() {
         return Objects.hash(variable, value, isDecision);
     }
+
+    //endregion
 }
 
-// ========================================
-// STACK DECISIONI GERARCHICO
-// ========================================
+
+
+//region STACK GERARCHICO PER BACKTRACKING
 
 /**
- * Stack gerarchico per gestione dei livelli di decisione nell'algoritmo CDCL.
+ * Si utilizza uno stack gerarchico per gestione livelli nell'algoritmo CDCL:
+ * implementa la struttura dati per organizzazione gerarchica delle
+ * decisioni e implicazioni durante la ricerca SAT. Inoltre fornisce supporto
+ * per le operazioni di backtracking cronologico e non cronologico.
  *
- * Questa struttura dati specializzata gestisce l'organizzazione gerarchica
- * delle decisioni e implicazioni durante la ricerca SAT, fornendo supporto
- * efficiente per operazioni di backtracking non cronologico.
- *
- * Organizzazione:
- * - Livello 0: implicazioni da clausole unitarie originali
- * - Livello 1+: livelli di decisione con decisioni e implicazioni conseguenti
+ * ORGANIZZAZIONE GERARCHICA:
+ * - Livello 0: implicazioni da clausole unitarie originali (sempre presente)
+ * - Livello i (i>0): livello di decisione i con decisione + implicazioni
  * - Ogni livello mantiene cronologia completa degli assegnamenti
- *
- * Operazioni Supportate:
- * - Aggiunta decisioni (creazione nuovo livello)
- * - Aggiunta implicazioni (al livello corrente)
- * - Backtracking a livello specifico
- * - Interrogazione stato corrente
- *
- * Invarianti:
- * - Livello 0 sempre presente (può essere vuoto)
- * - Ogni livello ≥ 1 inizia con esattamente una decisione
- * - Implicazioni sempre aggiunte al livello corrente
  * - Stack mai completamente vuoto
  */
 class DecisionStack {
 
-    // ========================================
-    // LOGGING E COSTANTI
-    // ========================================
-
-    /** Logger dedicato per operazioni dello stack decisioni */
     private static final Logger LOGGER = Logger.getLogger(DecisionStack.class.getName());
 
-    /** Messaggio di warning per tentativi di rimozione del livello 0 */
-    private static final String LEVEL_ZERO_REMOVAL_WARNING =
-            "Tentativo di rimuovere livello 0 - operazione non permessa";
-
-    // ========================================
-    // STRUTTURA DATI PRINCIPALE
-    // ========================================
+    //region STRUTTURA DATI STACK GERARCHICO
 
     /**
-     * Stack dei livelli di decisione.
+     * Stack dei livelli di decisione con organizzazione gerarchica.
      *
-     * Organizzazione:
-     * - Indice 0: livello 0 (implicazioni iniziali)
-     * - Indice i (i>0): livello i di decisione
-     * - Ogni elemento è ArrayList<AssignedLiteral> contenente gli assegnamenti del livello
+     * STRUTTURA:
+     * - Indice 0: livello 0 (implicazioni iniziali, sempre presente)
+     * - Indice i>0: livello i di decisione
+     * - Ogni livello è ArrayList<AssignedLiteral> con assegnamenti cronologici
      *
-     * Invariante: sempre contiene almeno il livello 0
+     * INVARIANTE: size() >= 1 (livello 0 sempre presente)
      */
-    private final Stack<ArrayList<AssignedLiteral>> procedureStack;
+    private final Stack<ArrayList<AssignedLiteral>> levelStack;
 
-    // ========================================
-    // COSTRUZIONE E INIZIALIZZAZIONE
-    // ========================================
+    //endregion
+
+
+    //region INIZIALIZZAZIONE
 
     /**
-     * Inizializza lo stack con il livello 0 vuoto.
-     *
-     * Il livello 0 è riservato alle implicazioni derivanti da clausole unitarie
-     * della formula originale, prima di qualsiasi decisione del solver.
+     * Inizializza stack con livello 0 vuoto.
+     * Il livello 0 è riservato a implicazioni da clausole unitarie originali.
      */
     public DecisionStack() {
-        this.procedureStack = new Stack<>();
-
-        // Inizializza livello 0 vuoto
-        this.procedureStack.push(new ArrayList<>());
+        this.levelStack = new Stack<>();
+        this.levelStack.push(new ArrayList<>()); // Livello 0 iniziale
 
         LOGGER.fine("DecisionStack inizializzato con livello 0");
     }
 
-    // ========================================
-    // OPERAZIONI DI AGGIUNTA
-    // ========================================
+    //endregion
+
+
+    //region OPERAZIONI DI AGGIUNTA
 
     /**
-     * Aggiunge una nuova decisione creando un nuovo livello.
+     * Aggiunge decisione euristica creando nuovo livello.
      *
-     * Le decisioni rappresentano scelte euristiche del solver e sempre
-     * iniziano un nuovo livello di decisione. Il livello creato conterrà
-     * la decisione iniziale e tutte le implicazioni conseguenti.
+     * ALGORITMO:
+     * 1. Valida parametri di input per consistenza
+     * 2. Crea assegnamento di decisione con metadata
+     * 3. Inizializza nuovo livello con la decisione
+     * 4. Aggiunge livello allo stack (incrementa altezza)
+     * 5. Log informazioni per debugging
      *
-     * @param variable identificatore numerico della variabile da decidere
-     * @param value valore booleano da assegnare alla variabile
-     * @throws IllegalArgumentException se variable ≤ 0 o value è null
+     * @param variable ID variabile da decidere (> 0)
+     * @param value valore booleano da assegnare
+     * @throws IllegalArgumentException se parametri non validi
      */
     public void addDecision(Integer variable, Boolean value) {
-        // Validazione parametri
         validateVariableAndValue(variable, value, "decisione");
 
-        // Crea l'assegnamento decisionale
+        // Crea assegnamento decisionale
         AssignedLiteral decision = new AssignedLiteral(variable, value, true, null);
 
-        // Crea nuovo livello con la decisione
+        // Inizializza nuovo livello
         ArrayList<AssignedLiteral> newLevel = new ArrayList<>();
         newLevel.add(decision);
 
-        // Aggiungi il nuovo livello allo stack
-        procedureStack.push(newLevel);
+        // Aggiunge al stack (operazione atomica)
+        levelStack.push(newLevel);
 
-        // Logging con informazioni dettagliate
-        int currentLevel = procedureStack.size() - 1;
+        int currentLevel = levelStack.size() - 1;
         LOGGER.fine(String.format("Decisione aggiunta: var=%d, val=%s, livello=%d",
                 variable, value, currentLevel));
-
-        logStackState("dopo aggiunta decisione");
     }
 
     /**
-     * Aggiunge un'implicazione al livello di decisione corrente.
+     * Aggiunge implicazione al livello corrente.
      *
-     * Le implicazioni sono assegnamenti dedotti dalla propagazione unitaria
-     * e vengono sempre aggiunte al livello di decisione attualmente attivo.
+     * ALGORITMO:
+     * 1. Valida parametri e clausola ancestrale
+     * 2. Verifica stato stack per consistenza
+     * 3. Crea assegnamento di implicazione
+     * 4. Modifica atomica del livello corrente
+     * 5. Log con informazioni contestuali
      *
-     * @param variable identificatore numerico della variabile implicata
-     * @param value valore booleano implicato per la variabile
-     * @param ancestorClause clausola che ha causato l'implicazione
+     * @param variable ID variabile implicata
+     * @param value valore implicato
+     * @param ancestorClause clausola causante l'implicazione
      * @throws IllegalArgumentException se parametri non validi
-     * @throws IllegalStateException se lo stack è in stato inconsistente
+     * @throws IllegalStateException se stack inconsistente
      */
     public void addImpliedLiteral(Integer variable, Boolean value, List<Integer> ancestorClause) {
-        // Validazione parametri
         validateVariableAndValue(variable, value, "implicazione");
         validateAncestorClause(ancestorClause);
 
-        // Validazione stato stack
-        if (procedureStack.isEmpty()) {
+        if (levelStack.isEmpty()) {
             throw new IllegalStateException("Stack vuoto - impossibile aggiungere implicazione");
         }
 
-        // Crea l'assegnamento di implicazione
+        // Crea implicazione con clausola ancestrale
         AssignedLiteral implication = new AssignedLiteral(variable, value, false, ancestorClause);
 
         // Modifica atomica del livello corrente
-        ArrayList<AssignedLiteral> currentLevel = procedureStack.pop();
+        ArrayList<AssignedLiteral> currentLevel = levelStack.pop();
         currentLevel.add(implication);
-        procedureStack.push(currentLevel);
+        levelStack.push(currentLevel);
 
-        // Logging con contesto
-        int levelIndex = procedureStack.size() - 1;
+        int levelIndex = levelStack.size() - 1;
         LOGGER.fine(String.format("Implicazione aggiunta: var=%d, val=%s, livello=%d, clausola=%s",
                 variable, value, levelIndex, ancestorClause));
-
-        logStackState("dopo aggiunta implicazione");
     }
 
-    // ========================================
-    // OPERAZIONI DI RIMOZIONE E BACKTRACKING
-    // ========================================
+    //endregion
+
+
+    //region OPERAZIONI DI RIMOZIONE E BACKTRACKING
 
     /**
-     * Rimuove e restituisce il livello di decisione più alto.
+     * Rimuove livello più alto (backtracking cronologico).
      *
-     * Questa operazione implementa il backtracking cronologico rimuovendo
-     * l'ultimo livello aggiunto. Il livello 0 è protetto e non può essere rimosso.
+     * PROTEZIONI:
+     * - Livello 0 è protetto e non può essere rimosso
+     * - Operazione atomica per consistenza
+     * - Restituisce copia difensiva degli assegnamenti rimossi
      *
-     * @return lista degli assegnamenti del livello rimosso
-     * @throws IllegalStateException se si tenta di rimuovere il livello 0
+     * @return assegnamenti del livello rimosso (vuoto se livello 0)
      */
     public ArrayList<AssignedLiteral> deleteLevel() {
-        // Protezione livello 0
-        if (procedureStack.size() <= 1) {
-            LOGGER.warning(LEVEL_ZERO_REMOVAL_WARNING);
-            return new ArrayList<>(); // Restituisce lista vuota invece di modificare lo stato
+        if (levelStack.size() <= 1) {
+            LOGGER.warning("Tentativo rimozione livello 0 - operazione ignorata");
+            return new ArrayList<>(); // Protezione livello 0
         }
 
-        // Rimozione sicura del livello
-        ArrayList<AssignedLiteral> removedLevel = procedureStack.pop();
-        int removedLevelIndex = procedureStack.size(); // Indice del livello appena rimosso
+        ArrayList<AssignedLiteral> removedLevel = levelStack.pop();
+        int removedLevelIndex = levelStack.size(); // Indice del livello rimosso
 
-        LOGGER.fine(String.format("Livello %d rimosso con %d letterali",
+        LOGGER.fine(String.format("Livello %d rimosso con %d assegnamenti",
                 removedLevelIndex, removedLevel.size()));
 
-        // Log dettagliato degli assegnamenti rimossi
+        // Log dettagliato per debugging
         if (LOGGER.isLoggable(Level.FINEST)) {
-            logRemovedAssignments(removedLevel, removedLevelIndex);
+            for (AssignedLiteral assignment : removedLevel) {
+                LOGGER.finest("Rimosso: " + assignment);
+            }
         }
 
-        logStackState("dopo rimozione livello");
-
-        // Restituisce copia difensiva
-        return new ArrayList<>(removedLevel);
+        return new ArrayList<>(removedLevel); // Copia difensiva
     }
 
     /**
-     * Esegue backtracking non cronologico al livello specificato.
+     * Backtracking non cronologico al livello target (backjumping).
      *
-     * Rimuove tutti i livelli superiori al target, implementando
-     * il backjumping caratteristico dell'algoritmo CDCL.
+     * ALGORITMO:
+     * 1. Valida livello target per safety
+     * 2. Rimuove sequenzialmente livelli superiori
+     * 3. Raccoglie tutti gli assegnamenti rimossi
+     * 4. Log statistiche dell'operazione
      *
-     * @param targetLevel livello di destinazione del backtrack
-     * @return lista di tutti gli assegnamenti rimossi
-     * @throws IllegalArgumentException se targetLevel < 0 o > livello corrente
+     * @param targetLevel livello di destinazione (>= 0)
+     * @return tutti gli assegnamenti rimossi durante backjump
+     * @throws IllegalArgumentException se targetLevel non valido
      */
     public List<AssignedLiteral> backtrackToLevel(int targetLevel) {
-        // Validazione livello target
-        int currentLevel = procedureStack.size() - 1;
+        int currentLevel = levelStack.size() - 1;
         validateBacktrackLevel(targetLevel, currentLevel);
 
         if (targetLevel == currentLevel) {
-            LOGGER.fine("Backtrack richiesto al livello corrente - nessuna operazione");
+            LOGGER.fine("Backtrack al livello corrente - nessuna operazione");
             return new ArrayList<>();
         }
 
-        // Raccolta assegnamenti rimossi per analisi
         List<AssignedLiteral> allRemovedAssignments = new ArrayList<>();
 
-        // Rimozione sequenziale dei livelli
-        while (procedureStack.size() > targetLevel + 1) {
+        // Rimozione sequenziale livelli
+        while (levelStack.size() > targetLevel + 1) {
             ArrayList<AssignedLiteral> removedLevel = deleteLevel();
             allRemovedAssignments.addAll(removedLevel);
         }
 
-        LOGGER.info(String.format("Backtrack completato: livello %d → %d, rimossi %d assegnamenti",
+        LOGGER.info(String.format("Backjump completato: %d → %d, rimossi %d assegnamenti",
                 currentLevel, targetLevel, allRemovedAssignments.size()));
 
         return allRemovedAssignments;
     }
 
-    // ========================================
-    // OPERAZIONI DI INTERROGAZIONE
-    // ========================================
+    //endregion
+
+
+    //region OPERAZIONI DI INTERROGAZIONE
 
     /**
-     * Restituisce il livello di decisione più alto senza rimuoverlo.
-     *
-     * @return copia difensiva degli assegnamenti del livello corrente
+     * @return copia difensiva assegnamenti livello corrente
      */
     public ArrayList<AssignedLiteral> getTopLevel() {
-        if (procedureStack.isEmpty()) {
+        if (levelStack.isEmpty()) {
             throw new IllegalStateException("Stack vuoto - nessun livello disponibile");
         }
+        return new ArrayList<>(levelStack.peek());
+    }
 
-        return new ArrayList<>(procedureStack.peek());
+    // TODO DEVI RITORNARE IL LIVELLO CORRENTE
+    public int getLevel() {
+        return levelStack.size();
     }
 
     /**
-     * Restituisce il numero di livelli nello stack.
-     *
-     * @return dimensione stack (sempre ≥ 1 per presenza garantita del livello 0)
+     * @return numero di livelli nello stack (sempre >= 1)
      */
     public int size() {
-        return procedureStack.size();
+        return levelStack.size();
     }
 
     /**
-     * Restituisce gli identificatori delle variabili assegnate a un livello specifico.
-     *
-     * @param levelIndex indice del livello (0-based)
-     * @return lista degli ID delle variabili assegnate al livello
-     * @throws IndexOutOfBoundsException se levelIndex non valido
+     * @return ID variabili assegnate a livello specifico
      */
     public ArrayList<Integer> getLiteralsAtLevel(int levelIndex) {
         validateLevelIndex(levelIndex);
 
-        List<AssignedLiteral> levelAssignments = procedureStack.get(levelIndex);
+        List<AssignedLiteral> levelAssignments = levelStack.get(levelIndex);
         ArrayList<Integer> variableIds = new ArrayList<>();
 
         for (AssignedLiteral assignment : levelAssignments) {
@@ -1004,70 +835,60 @@ class DecisionStack {
     }
 
     /**
-     * Restituisce tutti gli assegnamenti a un livello specifico.
-     *
-     * @param levelIndex indice del livello
-     * @return copia difensiva degli assegnamenti del livello
-     * @throws IndexOutOfBoundsException se levelIndex non valido
+     * @return tutti gli assegnamenti a livello specifico
      */
     public List<AssignedLiteral> getAssignmentsAtLevel(int levelIndex) {
         validateLevelIndex(levelIndex);
-        return new ArrayList<>(procedureStack.get(levelIndex));
+        return new ArrayList<>(levelStack.get(levelIndex));
     }
 
     /**
-     * Verifica se lo stack contiene solo il livello 0 vuoto.
-     *
-     * @return true se stack effettivamente vuoto (nessun assegnamento)
+     * @return true se stack contiene solo livello 0 vuoto
      */
     public boolean isEmpty() {
-        return procedureStack.size() == 1 && procedureStack.peek().isEmpty();
+        return levelStack.size() == 1 && levelStack.peek().isEmpty();
     }
 
     /**
-     * Calcola il numero totale di assegnamenti in tutti i livelli.
-     *
-     * @return conteggio totale assegnamenti
+     * @return numero totale assegnamenti in tutti i livelli
      */
     public int getTotalAssignments() {
-        return procedureStack.stream()
+        return levelStack.stream()
                 .mapToInt(ArrayList::size)
                 .sum();
     }
 
     /**
-     * Trova il livello di decisione di una variabile specifica.
-     *
-     * @param variable identificatore della variabile
-     * @return livello della variabile o -1 se non trovata
+     * Trova livello di una variabile specifica.
+     * @return livello variabile o -1 se non trovata
      */
     public int findVariableLevel(Integer variable) {
-        for (int level = 0; level < procedureStack.size(); level++) {
-            for (AssignedLiteral assignment : procedureStack.get(level)) {
+        for (int level = 0; level < levelStack.size(); level++) {
+            for (AssignedLiteral assignment : levelStack.get(level)) {
                 if (assignment.getVariable().equals(variable)) {
                     return level;
                 }
             }
         }
-        return -1; // Variabile non trovata
+        return -1;
     }
 
-    // ========================================
-    // VALIDAZIONE E CONTROLLI
-    // ========================================
+    //endregion
+
+
+    //region VALIDAZIONE PARAMETRI
 
     /**
      * Valida parametri variabile e valore.
      */
     private void validateVariableAndValue(Integer variable, Boolean value, String operationType) {
         if (variable == null || variable <= 0) {
-            throw new IllegalArgumentException(String.format(
-                    "Variable ID non valido per %s: %s (deve essere > 0)", operationType, variable));
+            throw new IllegalArgumentException(
+                    String.format("Variable ID non valido per %s: %s", operationType, variable));
         }
-
         if (value == null) {
-            throw new IllegalArgumentException(String.format(
-                    "Value non può essere null per %s", operationType));
+            throw new IllegalArgumentException(
+                    String.format("Value null non permesso per %s", operationType));
         }
     }
 
@@ -1079,80 +900,53 @@ class DecisionStack {
             throw new IllegalArgumentException("AncestorClause richiesta per implicazioni");
         }
 
-        // Verifica che tutti i letterali siano validi
         for (Integer literal : ancestorClause) {
             if (literal == null || literal == 0) {
-                throw new IllegalArgumentException("Letterale non valido in ancestorClause: " + literal);
+                throw new IllegalArgumentException("Letterale non valido: " + literal);
             }
         }
     }
 
     /**
-     * Valida livello per operazioni di backtrack.
+     * Valida livello per operazioni backtrack.
      */
     private void validateBacktrackLevel(int targetLevel, int currentLevel) {
         if (targetLevel < 0) {
-            throw new IllegalArgumentException("Target level non può essere negativo: " + targetLevel);
+            throw new IllegalArgumentException("Target level negativo: " + targetLevel);
         }
-
         if (targetLevel > currentLevel) {
-            throw new IllegalArgumentException(String.format(
-                    "Target level %d > current level %d", targetLevel, currentLevel));
+            throw new IllegalArgumentException(
+                    String.format("Target level %d > current level %d", targetLevel, currentLevel));
         }
     }
 
     /**
-     * Valida indice di livello per accesso.
+     * Valida indice livello per accesso.
      */
     private void validateLevelIndex(int levelIndex) {
-        if (levelIndex < 0 || levelIndex >= procedureStack.size()) {
-            throw new IndexOutOfBoundsException(String.format(
-                    "Level index %d fuori range [0, %d)", levelIndex, procedureStack.size()));
+        if (levelIndex < 0 || levelIndex >= levelStack.size()) {
+            throw new IndexOutOfBoundsException(
+                    String.format("Level index %d fuori range [0, %d)", levelIndex, levelStack.size()));
         }
     }
 
-    // ========================================
-    // LOGGING E DEBUGGING
-    // ========================================
+    //endregion
+
+
+    //region RAPPRESENTAZIONE TESTUALE
 
     /**
-     * Registra lo stato corrente dello stack per debugging.
-     */
-    private void logStackState(String context) {
-        if (!LOGGER.isLoggable(Level.FINEST)) return;
-
-        LOGGER.finest(String.format("Stack state %s: %d livelli, %d assegnamenti totali",
-                context, procedureStack.size(), getTotalAssignments()));
-    }
-
-    /**
-     * Registra dettagli degli assegnamenti rimossi.
-     */
-    private void logRemovedAssignments(ArrayList<AssignedLiteral> removedLevel, int levelIndex) {
-        for (AssignedLiteral assignment : removedLevel) {
-            LOGGER.finest(String.format("Rimosso da livello %d: %s", levelIndex, assignment));
-        }
-    }
-
-    // ========================================
-    // RAPPRESENTAZIONE TESTUALE
-    // ========================================
-
-    /**
-     * Genera rappresentazione testuale completa dello stack per debugging.
-     *
-     * @return stringa multi-linea con struttura completa dello stack
+     * Rappresentazione completa per debugging.
      */
     @Override
     public String toString() {
         StringBuilder output = new StringBuilder();
         output.append("DecisionStack {\n");
         output.append(String.format("  Livelli: %d, Assegnamenti totali: %d\n",
-                procedureStack.size(), getTotalAssignments()));
+                levelStack.size(), getTotalAssignments()));
 
-        // Dettaglio per ogni livello
-        for (int levelIndex = 0; levelIndex < procedureStack.size(); levelIndex++) {
-            ArrayList<AssignedLiteral> level = procedureStack.get(levelIndex);
+        for (int levelIndex = 0; levelIndex < levelStack.size(); levelIndex++) {
+            ArrayList<AssignedLiteral> level = levelStack.get(levelIndex);
             output.append(String.format("\n  Livello %d (%d assegnamenti):\n",
                     levelIndex, level.size()));
 
@@ -1161,7 +955,6 @@ class DecisionStack {
                 continue;
             }
 
-            // Dettaglio assegnamenti del livello
             for (AssignedLiteral assignment : level) {
                 String type = assignment.isDecision() ? "DECISION" : "IMPLIED";
                 String clauseInfo = assignment.hasAncestorClause()
@@ -1177,235 +970,5 @@ class DecisionStack {
         return output.toString();
     }
 
-    /**
-     * Genera rappresentazione compatta per logging.
-     *
-     * @return stringa compatta con statistiche essenziali
-     */
-    public String toCompactString() {
-        return String.format("DecisionStack[levels=%d, assignments=%d, current_level_size=%d]",
-                procedureStack.size(), getTotalAssignments(),
-                procedureStack.isEmpty() ? 0 : procedureStack.peek().size());
-    }
-}
-
-// ========================================
-// CLASSI DI RISULTATO E SUPPORTO
-// ========================================
-
-/**
- * Risultato di un'operazione che può generare conflitti.
- *
- * Questa classe encapsula l'esito di operazioni CDCL che possono
- * portare a stati di conflitto, fornendo informazioni dettagliate
- * per la gestione appropriata del flusso algoritmico.
- *
- * Stati Possibili:
- * - Successo senza conflitto
- * - Conflitto con clausola identificata
- * - Progresso con modifiche allo stato
- */
-class ConflictResult {
-
-    // ========================================
-    // ATTRIBUTI DEL RISULTATO
-    // ========================================
-
-    /** Indica se l'operazione ha generato un conflitto */
-    private final boolean hasConflict;
-
-    /** Clausola che ha causato il conflitto (null se nessun conflitto) */
-    private final List<Integer> conflictClause;
-
-    /** Indica se l'operazione ha prodotto progresso/modifiche */
-    private final boolean hasProgress;
-
-    // ========================================
-    // COSTRUZIONE
-    // ========================================
-
-    /**
-     * Costruisce un risultato di conflitto con informazioni complete.
-     *
-     * @param hasConflict true se si è verificato un conflitto
-     * @param conflictClause clausola causante il conflitto (richiesta se hasConflict=true)
-     * @param hasProgress true se l'operazione ha modificato lo stato
-     */
-    public ConflictResult(boolean hasConflict, List<Integer> conflictClause, boolean hasProgress) {
-        // Validazione coerenza parametri
-        if (hasConflict && (conflictClause == null || conflictClause.isEmpty())) {
-            throw new IllegalArgumentException("ConflictClause richiesta quando hasConflict=true");
-        }
-
-        this.hasConflict = hasConflict;
-        this.conflictClause = conflictClause != null ? new ArrayList<>(conflictClause) : null;
-        this.hasProgress = hasProgress;
-    }
-
-    // ========================================
-    // INTERFACCIA PUBBLICA
-    // ========================================
-
-    /** @return true se l'operazione ha generato un conflitto */
-    public boolean hasConflict() {
-        return hasConflict;
-    }
-
-    /** @return clausola di conflitto (copia difensiva) */
-    public List<Integer> getConflictClause() {
-        return conflictClause != null ? new ArrayList<>(conflictClause) : null;
-    }
-
-    /** @return true se l'operazione ha prodotto progresso */
-    public boolean hasProgress() {
-        return hasProgress;
-    }
-
-    // ========================================
-    // FACTORY METHODS
-    // ========================================
-
-    /** Crea risultato di successo senza conflitto */
-    public static ConflictResult success() {
-        return new ConflictResult(false, null, true);
-    }
-
-    /** Crea risultato di successo senza modifiche */
-    public static ConflictResult noProgress() {
-        return new ConflictResult(false, null, false);
-    }
-
-    /** Crea risultato di conflitto */
-    public static ConflictResult conflict(List<Integer> clause) {
-        return new ConflictResult(true, clause, true);
-    }
-
-    // ========================================
-    // UTILITÀ
-    // ========================================
-
-    @Override
-    public String toString() {
-        if (hasConflict) {
-            return String.format("ConflictResult{CONFLICT, clause=%s}", conflictClause);
-        } else {
-            return String.format("ConflictResult{SUCCESS, progress=%s}", hasProgress);
-        }
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (obj == null || getClass() != obj.getClass()) return false;
-
-        ConflictResult that = (ConflictResult) obj;
-        return hasConflict == that.hasConflict &&
-                hasProgress == that.hasProgress &&
-                Objects.equals(conflictClause, that.conflictClause);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(hasConflict, conflictClause, hasProgress);
-    }
-}
-
-/**
- * Risultato dell'analisi di un conflitto nell'algoritmo CDCL.
- *
- * Encapsula i risultati del processo di conflict analysis, includendo
- * la clausola appresa e le informazioni per il backtracking.
- */
-class ConflictAnalysisResult {
-
-    // ========================================
-    // ATTRIBUTI DEL RISULTATO
-    // ========================================
-
-    /** Clausola appresa dal processo di analisi */
-    private final List<Integer> learnedClause;
-
-    /** Livello di backtrack calcolato per la clausola appresa */
-    private final int backtrackLevel;
-
-    // ========================================
-    // COSTRUZIONE
-    // ========================================
-
-    /**
-     * Costruisce un risultato di analisi conflitto.
-     *
-     * @param learnedClause clausola appresa (può essere vuota per UNSAT)
-     * @param backtrackLevel livello di destinazione per backtrack
-     */
-    public ConflictAnalysisResult(List<Integer> learnedClause, int backtrackLevel) {
-        this.learnedClause = learnedClause != null ? new ArrayList<>(learnedClause) : new ArrayList<>();
-        this.backtrackLevel = Math.max(-1, backtrackLevel); // -1 indica UNSAT
-    }
-
-    // ========================================
-    // INTERFACCIA PUBBLICA
-    // ========================================
-
-    /** @return clausola appresa (copia difensiva) */
-    public List<Integer> getLearnedClause() {
-        return new ArrayList<>(learnedClause);
-    }
-
-    /** @return livello di backtrack (-1 se UNSAT) */
-    public int getBacktrackLevel() {
-        return backtrackLevel;
-    }
-
-    /** @return true se il risultato indica formula insoddisfacibile */
-    public boolean isUnsatisfiable() {
-        return backtrackLevel == -1 || learnedClause.isEmpty();
-    }
-
-    /** @return true se la clausola appresa è unitaria */
-    public boolean isUnitClause() {
-        return learnedClause.size() == 1;
-    }
-
-    // ========================================
-    // FACTORY METHODS
-    // ========================================
-
-    /** Crea risultato per clausola appresa normale */
-    public static ConflictAnalysisResult learned(List<Integer> clause, int level) {
-        return new ConflictAnalysisResult(clause, level);
-    }
-
-    /** Crea risultato per formula insoddisfacibile */
-    public static ConflictAnalysisResult unsatisfiable() {
-        return new ConflictAnalysisResult(new ArrayList<>(), -1);
-    }
-
-    // ========================================
-    // UTILITÀ
-    // ========================================
-
-    @Override
-    public String toString() {
-        if (isUnsatisfiable()) {
-            return "ConflictAnalysisResult{UNSAT}";
-        }
-        return String.format("ConflictAnalysisResult{clause=%s, backtrack=%d}",
-                learnedClause, backtrackLevel);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (obj == null || getClass() != obj.getClass()) return false;
-
-        ConflictAnalysisResult that = (ConflictAnalysisResult) obj;
-        return backtrackLevel == that.backtrackLevel &&
-                Objects.equals(learnedClause, that.learnedClause);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(learnedClause, backtrackLevel);
-    }
+    //endregion
 }
