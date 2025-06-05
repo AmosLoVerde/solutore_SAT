@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  * - Unit propagation con rilevamento conflitti
  *
  * @author Amos Lo Verde
- * @version 1.5.2
+ * @version 1.5.3
  */
 public final class Main {
 

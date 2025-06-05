@@ -806,9 +806,11 @@ class DecisionStack {
         return new ArrayList<>(levelStack.peek());
     }
 
-    // TODO DEVI RITORNARE IL LIVELLO CORRENTE
+    /**
+     * @return livello corrente (numero di livelli - 1)
+     */
     public int getLevel() {
-        return levelStack.size();
+        return levelStack.size() - 1;
     }
 
     /**

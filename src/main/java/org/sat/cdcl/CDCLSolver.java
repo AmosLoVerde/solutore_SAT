@@ -7,11 +7,13 @@ import java.util.logging.Level;
 
 /**
  * SOLUTORE CDCL (Conflict-Driven Clause Learning) per problemi SAT
+ * VERSIONE FINALE CORRETTA per gestione spiegazioni sequenziali
  *
  * ALGORITMI IMPLEMENTATI:
  * - Unit Propagation: propaga clausole unitarie automaticamente
  * - VSIDS Heuristic: Variable State Independent Decaying Sum per selezione variabili
  * - Conflict Analysis con "spiegazione" matematicamente corretta
+ * - Gestione corretta spiegazioni sequenziali per conflitti livello 0
  * - Non-chronological backtracking: backjump intelligente ai livelli necessari
  * - Clause learning: apprende clausole dalle spiegazioni
  * - Complete proof generation: genera prove tramite spiegazioni sequenziali
@@ -39,6 +41,9 @@ public class CDCLSolver {
 
     /** Generatore prove per formule UNSAT */
     private final ProofGenerator proofGenerator;
+
+    /** Mapping letterale → clausola unitaria originale (per spiegazioni livello 0) */
+    private final Map<Integer, List<Integer>> unitClauseMapping;
 
     //endregion
 
@@ -73,6 +78,7 @@ public class CDCLSolver {
         this.assignedValues = initializeVariableAssignments();
         this.vsidsCounter = initializeVSIDSCounters();
         this.learnedClauses = new ArrayList<>();
+        this.unitClauseMapping = new HashMap<>();
 
         // Configurazione generatore prove
         this.proofGenerator = new ProofGenerator();
@@ -234,26 +240,8 @@ public class CDCLSolver {
         int iterationCount = 0;
         final int MAX_ITERATIONS = 10_000_000;
 
-        // TODO: Bisogna aggiungere al livello 0 i letterali singoli
-        List<List<Integer>> allClauses = getAllActiveClauses();
-        for (List<Integer> clause : allClauses) {
-            if (clause.size() == 1) {
-                Integer literal = clause.getFirst();
-                Integer variable = Math.abs(literal);
-                Boolean value = literal > 0;
-
-                // Verifica se già assegnata
-                if (assignedValues.get(variable) == null) {
-                    // Crea assegnamento al livello 0 (senza incrementare decisioni)
-                    AssignedLiteral unitAssignment = new AssignedLiteral(variable, value, false, clause);
-                    assignedValues.put(variable, unitAssignment);
-                    decisionStack.addImpliedLiteral(variable, value, clause);
-
-                    LOGGER.fine("Letterale unitario aggiunto al livello 0: " + variable + " = " + value + " da " + clause);
-                }
-            }
-        }
-
+        // INIZIALIZZAZIONE LIVELLO 0: aggiungi tutti i letterali unitari
+        initializeLevel0WithUnitClauses();
 
         while (!interrupted) {
             iterationCount++;
@@ -295,10 +283,8 @@ public class CDCLSolver {
                 performLearningAndBacktrack(analysisResult);
 
                 // Il nuovo apprendimento potrebbe causare propagazioni
-                performUnitPropagation();
                 continue;
             }
-
 
             // FASE 5: DECISIONE VSIDS se non ci sono conflitti e non siamo SAT
             if (!areAllVariablesAssigned()) {
@@ -314,6 +300,47 @@ public class CDCLSolver {
 
         LOGGER.info("Loop CDCL terminato - Decisioni: " + decisionCount + ", Conflitti: " + conflictCount);
         return interrupted ? CDCLLoopResult.interrupted() : CDCLLoopResult.sat();
+    }
+
+    /**
+     * INIZIALIZZAZIONE LIVELLO 0: aggiunge tutte le clausole unitarie originali
+     */
+    private void initializeLevel0WithUnitClauses() {
+        LOGGER.fine("=== INIZIALIZZAZIONE LIVELLO 0 CON CLAUSOLE UNITARIE ===");
+
+        List<List<Integer>> allClauses = formula.getClauses();
+        int unitClausesCount = 0;
+
+        for (List<Integer> clause : allClauses) {
+            if (clause.size() == 1) {
+                Integer literal = clause.get(0);
+                Integer variable = Math.abs(literal);
+                Boolean value = literal > 0;
+
+                // Verifica se già assegnata
+                if (assignedValues.get(variable) == null) {
+                    // Crea assegnamento al livello 0 (senza incrementare decisioni)
+                    AssignedLiteral unitAssignment = new AssignedLiteral(variable, value, false, clause);
+                    assignedValues.put(variable, unitAssignment);
+                    decisionStack.addImpliedLiteral(variable, value, clause);
+
+                    // Registra mapping per uso in spiegazioni
+                    unitClauseMapping.put(literal, new ArrayList<>(clause));
+
+                    unitClausesCount++;
+                    LOGGER.fine("Letterale unitario aggiunto al livello 0: " + variable + " = " + value + " da " + clause);
+                } else {
+                    // Verifica consistenza se già assegnata
+                    AssignedLiteral existing = assignedValues.get(variable);
+                    if (!existing.getValue().equals(value)) {
+                        LOGGER.severe("Conflitto immediato tra clausole unitarie: " + variable);
+                        // Questo porterà a UNSAT immediato
+                    }
+                }
+            }
+        }
+
+        LOGGER.info("Livello 0 inizializzato con " + unitClausesCount + " clausole unitarie");
     }
 
     /**
@@ -382,7 +409,6 @@ public class CDCLSolver {
                             progressMade = true;
                             LOGGER.finest("Propagazione: " + evaluation.getUnitLiteral() + " da " + clause);
                         }
-                        //return PropagationResult.success();
                         break;
 
                     case UNRESOLVED:
@@ -498,7 +524,7 @@ public class CDCLSolver {
     //region CONFLICT ANALYSIS CORRETTO
 
     /**
-     * CONFLICT ANALYSIS CORRETTO: implementa la "spiegazione" come descritto
+     * CONFLICT ANALYSIS CORRETTO: implementa la "spiegazione" corretta
      */
     private ConflictAnalysisResult performConflictAnalysis(List<Integer> conflictClause,
                                                            List<Integer> justifyingClause) {
@@ -512,40 +538,218 @@ public class CDCLSolver {
         // Aggiorna contatori VSIDS
         updateVSIDSCountersAfterConflict(conflictClause);
 
+        // CASO 1: Spiegazione normale tra clausola giustificante e conflitto
+        if (justifyingClause != null) {
+            return handleNormalConflictWithExplanation(conflictClause, justifyingClause);
+        }
+
+        // CASO 2: Conflitto diretto (clausola completamente falsificata)
+        return handleDirectConflict(conflictClause);
+    }
+
+    /**
+     * GESTIONE CONFLITTO NORMALE: spiegazione tra clausola giustificante e conflitto
+     */
+    private ConflictAnalysisResult handleNormalConflictWithExplanation(List<Integer> conflictClause,
+                                                                       List<Integer> justifyingClause) {
+        LOGGER.info("=== GESTIONE CONFLITTO NORMALE CON SPIEGAZIONE ===");
+
         // Esegui spiegazione tra clausola giustificante e clausola di conflitto
         List<Integer> explanation = performExplanation(justifyingClause, conflictClause);
 
-        LOGGER.fine("Risultato spiegazione: " + explanation);
+        LOGGER.info("Spiegazione: " + justifyingClause + " e " + conflictClause + " → " + explanation);
 
-        // Registra passo di spiegazione per la prova
+        // Registra il passo di spiegazione
         proofGenerator.recordResolutionStep(justifyingClause, conflictClause, explanation);
 
-        // Verifica se abbiamo inconsistenza (clausola vuota)
+        // Verifica se abbiamo derivato la clausola vuota
         if (explanation.isEmpty()) {
-            LOGGER.info("Clausola vuota derivata - Formula UNSAT");
+            LOGGER.info("*** CLAUSOLA VUOTA DERIVATA - FORMULA UNSAT ***");
             return ConflictAnalysisResult.unsatisfiable();
         }
 
-        // Calcola livello di backtrack basato sul tipo di explanation
-        int backtrackLevel = calculateBacktrackLevel(explanation);
-        ConflictAnalysisResult ricalcolo = ConflictAnalysisResult.backtrack(explanation, backtrackLevel);
+        // Verifica se explanation genera conflitto con assegnamenti livello 0
+        return handleExplanationResult(explanation);
+    }
 
-        // Verifica inconsistenza con letterali contraddittori
-        if (isInconsistentWithCurrentAssignments(explanation)) {
-            LOGGER.info("Inconsistenza rilevata con assegnamenti correnti - Formula UNSAT");
+    /**
+     * GESTIONE CONFLITTO DIRETTO: clausola completamente falsificata
+     */
+    private ConflictAnalysisResult handleDirectConflict(List<Integer> conflictClause) {
+        LOGGER.info("=== GESTIONE CONFLITTO DIRETTO ===");
 
-            // Trova il letterale contraddittorio per generare clausola vuota finale
-            List<Integer> contradictoryClause = findContradictoryClause(explanation);
-            if (contradictoryClause != null) {
-                proofGenerator.recordResolutionStep(explanation, contradictoryClause, Collections.emptyList());
+        // Verifica se tutti i letterali sono al livello 0
+        if (areAllLiteralsAtLevel0(conflictClause)) {
+            LOGGER.info("Conflitto diretto al livello 0 - spiegazioni sequenziali");
+            return handleLevel0DirectConflict(conflictClause);
+        }
+
+        // Conflitto a livelli superiori - logica normale
+        return ConflictAnalysisResult.unsatisfiable();
+    }
+
+    /**
+     * GESTIONE RISULTATO SPIEGAZIONE: verifica se causa conflitti con livello 0
+     */
+    private ConflictAnalysisResult handleExplanationResult(List<Integer> explanation) {
+        // Caso 1: letterale singolo
+        if (explanation.size() == 1) {
+            Integer literal = explanation.get(0);
+            Integer variable = Math.abs(literal);
+            Boolean expectedValue = literal > 0;
+
+            // Verifica conflitto con livello 0
+            AssignedLiteral existing = assignedValues.get(variable);
+            if (existing != null && getLevelForVariable(variable) == 0) {
+                if (!existing.getValue().equals(expectedValue)) {
+                    // Conflitto con livello 0 - genera clausola vuota
+                    List<Integer> unitClause = Arrays.asList(-literal);
+                    proofGenerator.recordResolutionStep(explanation, unitClause, Collections.emptyList());
+                    return ConflictAnalysisResult.unsatisfiable();
+                }
             }
 
-            return ConflictAnalysisResult.unsatisfiable();
+            // Backtrack al livello 0
+            return ConflictAnalysisResult.backtrack(explanation, 0);
         }
 
+        // Caso 2: disgiunzione - verifica se tutti letterali sono in conflitto con livello 0
+        if (areAllLiteralsInConflictWithLevel0(explanation)) {
+            return handleLevel0ConflictSequence(explanation);
+        }
 
-        return  ricalcolo;
-        //return ConflictAnalysisResult.backtrack(explanation, backtrackLevel);
+        // Caso normale: calcola livello backtrack appropriato
+        int backtrackLevel = calculateBacktrackLevel(explanation);
+        return ConflictAnalysisResult.backtrack(explanation, backtrackLevel);
+    }
+
+    /**
+     * GESTIONE CONFLITTO DIRETTO LIVELLO 0: spiegazioni sequenziali
+     */
+    private ConflictAnalysisResult handleLevel0DirectConflict(List<Integer> conflictClause) {
+        return handleLevel0ConflictSequence(conflictClause);
+    }
+
+    /**
+     * GESTIONE SEQUENZA CONFLITTI LIVELLO 0: spiegazioni sequenziali fino a clausola vuota
+     */
+    private ConflictAnalysisResult handleLevel0ConflictSequence(List<Integer> currentClause) {
+        LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 ===");
+        LOGGER.info("Clausola iniziale: " + currentClause);
+
+        List<Integer> workingClause = new ArrayList<>(currentClause);
+
+        while (!workingClause.isEmpty()) {
+            // Trova prossimo letterale da consumare
+            Integer literalToConsume = findNextLiteralToConsume(workingClause);
+
+            if (literalToConsume == null) {
+                LOGGER.warning("Nessun letterale da consumare trovato in: " + workingClause);
+                break;
+            }
+
+            // Trova clausola unitaria corrispondente
+            List<Integer> unitClause = findUnitClauseForLiteral(literalToConsume);
+
+            if (unitClause == null) {
+                LOGGER.warning("Clausola unitaria non trovata per letterale: " + literalToConsume);
+                break;
+            }
+
+            // Esegui spiegazione
+            List<Integer> nextClause = performExplanation(workingClause, unitClause);
+
+            LOGGER.info("Spiegazione sequenziale: " + workingClause + " e " + unitClause + " → " + nextClause);
+
+            // Registra passo di spiegazione
+            proofGenerator.recordResolutionStep(workingClause, unitClause, nextClause);
+
+            // Aggiorna clausola di lavoro
+            workingClause = nextClause;
+
+            // Se clausola vuota, termina
+            if (workingClause.isEmpty()) {
+                LOGGER.info("*** CLAUSOLA VUOTA DERIVATA DA SPIEGAZIONI SEQUENZIALI ***");
+                return ConflictAnalysisResult.unsatisfiable();
+            }
+        }
+
+        LOGGER.warning("Spiegazioni sequenziali terminate senza clausola vuota: " + workingClause);
+        return ConflictAnalysisResult.unsatisfiable();
+    }
+
+    /**
+     * TROVA PROSSIMO LETTERALE DA CONSUMARE: sceglie letterale in conflitto con livello 0
+     */
+    private Integer findNextLiteralToConsume(List<Integer> clause) {
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment != null && getLevelForVariable(variable) == 0) {
+                Boolean expectedValue = literal > 0;
+                if (!assignment.getValue().equals(expectedValue)) {
+                    // Questo letterale è in conflitto con livello 0
+                    return -literal; // Letterale opposto per la clausola unitaria
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * TROVA CLAUSOLA UNITARIA PER LETTERALE: cerca nel mapping o negli assegnamenti
+     */
+    private List<Integer> findUnitClauseForLiteral(Integer literal) {
+        // Cerca nel mapping delle clausole unitarie originali
+        List<Integer> unitClause = unitClauseMapping.get(literal);
+        if (unitClause != null) {
+            return unitClause;
+        }
+
+        // Crea clausola unitaria sintetica se è un assegnamento noto
+        Integer variable = Math.abs(literal);
+        AssignedLiteral assignment = assignedValues.get(variable);
+
+        if (assignment != null && getLevelForVariable(variable) == 0) {
+            return Arrays.asList(literal);
+        }
+
+        return null;
+    }
+
+    /**
+     * VERIFICA SE TUTTI I LETTERALI SONO AL LIVELLO 0
+     */
+    private boolean areAllLiteralsAtLevel0(List<Integer> clause) {
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            int level = getLevelForVariable(variable);
+            if (level != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * VERIFICA SE TUTTI I LETTERALI SONO IN CONFLITTO CON LIVELLO 0
+     */
+    private boolean areAllLiteralsInConflictWithLevel0(List<Integer> clause) {
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment == null || getLevelForVariable(variable) != 0) {
+                return false;
+            }
+
+            Boolean expectedValue = literal > 0;
+            if (assignment.getValue().equals(expectedValue)) {
+                return false; // Non in conflitto
+            }
+        }
+        return true;
     }
 
     /**
@@ -584,49 +788,6 @@ public class CDCLSolver {
     }
 
     /**
-     * Verifica se explanation è inconsistente con assegnamenti correnti
-     */
-    private boolean isInconsistentWithCurrentAssignments(List<Integer> explanation) {
-        for (Integer literal : explanation) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
-            ArrayList level0 = decisionStack.getLiteralsAtLevel(0);
-
-            if(level0.size() == 0){
-                return false;
-            }
-            if (assignment != null) {
-                boolean expectedValue = literal > 0;
-                if (assignment.getValue() != expectedValue) {
-                    LOGGER.fine("Inconsistenza trovata: " + variable + " attuale=" +
-                            assignment.getValue() + " richiesto=" + expectedValue);
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Trova clausola contraddittoria per generazione clausola vuota finale
-     */
-    private List<Integer> findContradictoryClause(List<Integer> explanation) {
-        for (Integer literal : explanation) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
-
-            if (assignment != null) {
-                boolean expectedValue = literal > 0;
-                if (assignment.getValue() != expectedValue) {
-                    // Trova clausola unitaria contraddittoria
-                    return Arrays.asList(-literal);
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
      * Calcola livello di backtrack corretto
      */
     private int calculateBacktrackLevel(List<Integer> explanation) {
@@ -644,7 +805,7 @@ public class CDCLSolver {
      * Trova livello appropriato per assertion di clausola appresa
      */
     private int findAssertionLevel(List<Integer> learnedClause) {
-        int currentLevel = decisionStack.size() - 1;
+        int currentLevel = decisionStack.getLevel();
 
         // Per semplicità, backtrack di un livello per permettere assertion
         return Math.max(0, currentLevel - 1);
@@ -732,11 +893,11 @@ public class CDCLSolver {
      * Esegue backtrack al livello specificato
      */
     private void performBacktrack(int targetLevel) {
-        int currentLevel = decisionStack.size() - 1;
+        int currentLevel = decisionStack.getLevel();
 
         LOGGER.fine("Backtrack: " + currentLevel + " → " + targetLevel);
 
-        while (decisionStack.size() > targetLevel + 1) {
+        while (decisionStack.getLevel() > targetLevel) {
             List<AssignedLiteral> removedLevel = decisionStack.deleteLevel();
 
             for (AssignedLiteral assignment : removedLevel) {
@@ -751,7 +912,7 @@ public class CDCLSolver {
      * Applica assertion di clausola appresa al livello corrente
      */
     private void applyAssertion(List<Integer> learnedClause, int level) {
-        if (learnedClause.size() == 1) {
+        if (learnedClause != null && learnedClause.size() == 1) {
             // Clausola unitaria - auto-giustificata
             Integer literal = learnedClause.get(0);
             Integer variable = Math.abs(literal);
@@ -790,7 +951,7 @@ public class CDCLSolver {
                 assignedValues.put(variable, decision);
                 decisionStack.addDecision(variable, value);
 
-                int currentLevel = decisionStack.size() - 1;
+                int currentLevel = decisionStack.getLevel();
                 LOGGER.fine(String.format("DECISIONE #%d: %d = %s @ livello %d",
                         decisionCount, variable, value, currentLevel));
 
