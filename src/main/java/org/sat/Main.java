@@ -10,7 +10,8 @@ import org.sat.cdcl.SATResult;
 import org.sat.cdcl.SATStatistics;
 import org.sat.cnf.CNFConverter;
 import org.sat.cnf.LogicFormulaParser;
-import org.sat.optimization.TseitinConverter;
+import org.sat.optionalfeatures.SubsumptionPrinciple;
+import org.sat.optionalfeatures.TseitinConverter;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -36,9 +37,10 @@ import java.util.stream.Stream;
  * - Generazione automatica di prove per formule UNSAT
  * - Unit propagation con rilevamento conflitti
  * - Trasformazione di Tseitin per E-CNF equisoddisfacibili
+ * - Principio di sussunzione per eliminazione clausole ridondanti
  *
  * @author Amos Lo Verde
- * @version 1.6.1
+ * @version 1.7.0
  */
 public final class Main {
 
@@ -54,7 +56,16 @@ public final class Main {
     private static final String DIR_PARAM = "-d";
     private static final String OUTPUT_PARAM = "-o";
     private static final String TIMEOUT_PARAM = "-t";
-    private static final String CONVERT_PARAM = "-convert=tseitin";
+    private static final String OPT_PARAM = "-opt=";
+
+    /**
+     * Opzioni di ottimizzazione
+     */
+    private static final String OPT_SUBSUMPTION = "s";
+    private static final String OPT_WATCHED_LITERALS = "w";
+    private static final String OPT_RESTART = "r";
+    private static final String OPT_TSEITIN = "t";
+    private static final String OPT_ALL = "all";
 
     /**
      * Configurazioni timeout
@@ -139,7 +150,19 @@ public final class Main {
     private static void displayConfiguration(Configuration config) {
         System.out.println("\n=== CONFIGURAZIONE SOLUTORE SAT ===");
         System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
-        System.out.println("Trasformazione: " + (config.useTseitin ? "Tseitin (E-CNF)" : "CNF standard"));
+
+        // Mostra ottimizzazioni attive
+        List<String> activeOptimizations = new ArrayList<>();
+        if (config.useSubsumption) activeOptimizations.add("Sussunzione");
+        if (config.useWatchedLiterals) activeOptimizations.add("Watched Literals");
+        if (config.useRestart) activeOptimizations.add("Restart");
+        if (config.useTseitin) activeOptimizations.add("Tseitin");
+
+        if (activeOptimizations.isEmpty()) {
+            System.out.println("Ottimizzazioni: Nessuna");
+        } else {
+            System.out.println("Ottimizzazioni: " + String.join(", ", activeOptimizations));
+        }
 
         if (config.isFileMode) {
             System.out.println("Modalità: File singolo");
@@ -160,10 +183,10 @@ public final class Main {
     private static void executeSelectedMode(Configuration config) {
         if (config.isFileMode) {
             LOGGER.info("Esecuzione modalità file singolo: " + config.inputPath);
-            processFile(config.inputPath, config.outputPath, config.timeoutSeconds, config.useTseitin);
+            processFile(config.inputPath, config.outputPath, config.timeoutSeconds, config);
         } else {
             LOGGER.info("Esecuzione modalità directory: " + config.inputPath);
-            processDirectory(config.inputPath, config.outputPath, config.timeoutSeconds, config.useTseitin);
+            processDirectory(config.inputPath, config.outputPath, config.timeoutSeconds, config);
         }
     }
 
@@ -180,19 +203,28 @@ public final class Main {
      * 2. Parsing con ANTLR (grammatica logica proposizionale)
      * 3. Conversione automatica in CNF
      * 4. [OPZIONALE] Conversione Tseitin in E-CNF se richiesta
-     * 5. Risoluzione SAT con CDCL e timeout
-     * 6. Salvataggio risultati e statistiche
+     * 5. [OPZIONALE] Applicazione principio di sussunzione se richiesto
+     * 6. Risoluzione SAT con CDCL e timeout
+     * 7. Salvataggio risultati e statistiche
      *
      * @param filePath percorso file da elaborare
      * @param outputPath directory output (null = default)
      * @param timeoutSeconds timeout per risoluzione SAT
-     * @param useTseitin flag per conversione Tseitin
+     * @param config configurazione ottimizzazioni
      * @return risultato elaborazione
      */
-    private static ProcessResult processFile(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) {
+    private static ProcessResult processFile(String filePath, String outputPath, int timeoutSeconds, Configuration config) {
         System.out.println("\n=== ELABORAZIONE FILE ===");
         System.out.println("File: " + Paths.get(filePath).getFileName());
-        System.out.println("Conversione: " + (useTseitin ? "Tseitin (E-CNF)" : "CNF standard"));
+
+        // Mostra ottimizzazioni attive
+        List<String> activeOpts = new ArrayList<>();
+        if (config.useTseitin) activeOpts.add("Tseitin");
+        if (config.useSubsumption) activeOpts.add("Sussunzione");
+        if (config.useWatchedLiterals) activeOpts.add("Watched Literals");
+        if (config.useRestart) activeOpts.add("Restart");
+
+        System.out.println("Ottimizzazioni: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
         System.out.println("========================\n");
 
         try {
@@ -206,13 +238,15 @@ public final class Main {
             saveCNFToFile(cnfResult.cnfString, filePath, outputPath);
 
             // STEP 4: Conversione Tseitin (se richiesta)
-            CNFConverter formulaToSolve;
+            CNFConverter formulaToOptimize;
             String conversionInfo = "";
+            boolean isECNF = false;
 
-            if (useTseitin) {
+            if (config.useTseitin) {
                 TseitinConversionResult tseitinResult = convertToECNF(cnfResult);
-                formulaToSolve = tseitinResult.ecnfFormula;
+                formulaToOptimize = tseitinResult.ecnfFormula;
                 conversionInfo = tseitinResult.conversionInfo;
+                isECNF = true;
 
                 // Salvataggio E-CNF - SOLO FORMULA
                 saveECNFToFile(tseitinResult.ecnfString, filePath, outputPath);
@@ -220,20 +254,33 @@ public final class Main {
                 // Salvataggio statistiche Tseitin - FILE SEPARATO
                 saveTseitinStatsToFile(conversionInfo, filePath, outputPath);
             } else {
-                formulaToSolve = cnfResult.cnfFormula;
+                formulaToOptimize = cnfResult.cnfFormula;
             }
 
-            // STEP 5: Risoluzione SAT con timeout
+            // STEP 5: Applicazione principio di sussunzione (se richiesto)
+            CNFConverter formulaToSolve = formulaToOptimize;
+            String subsumptionInfo = "";
+
+            if (config.useSubsumption) {
+                SubsumptionOptimizationResult subsumptionResult = applySubsumptionOptimization(formulaToOptimize, isECNF);
+                formulaToSolve = subsumptionResult.optimizedFormula;
+                subsumptionInfo = subsumptionResult.optimizationInfo;
+
+                // Salvataggio statistiche sussunzione
+                saveSubsumptionStatsToFile(subsumptionInfo, filePath, outputPath, isECNF);
+            }
+
+            // STEP 6: Risoluzione SAT con timeout
             SATResult satResult = solveSATWithTimeout(formulaToSolve, timeoutSeconds);
 
             if (satResult == null) {
-                return handleTimeoutCase(filePath, outputPath, timeoutSeconds, useTseitin);
+                return handleTimeoutCase(filePath, outputPath, timeoutSeconds, config);
             }
 
-            // STEP 6: Salvataggio risultati
-            saveResultsToFile(satResult, formulaToSolve, filePath, outputPath, conversionInfo, useTseitin);
+            // STEP 7: Salvataggio risultati
+            saveResultsToFile(satResult, formulaToSolve, filePath, outputPath, conversionInfo, config);
 
-            // STEP 7: Visualizzazione statistiche
+            // STEP 8: Visualizzazione statistiche
             displayFinalStatistics(satResult, formulaToSolve);
 
             return ProcessResult.success();
@@ -298,12 +345,28 @@ public final class Main {
     }
 
     /**
+     * Applica il principio di sussunzione per ottimizzare la formula
+     */
+    private static SubsumptionOptimizationResult applySubsumptionOptimization(CNFConverter formula, boolean isECNF) throws Exception {
+        String stepNumber = isECNF ? "3b" : "3a";
+        System.out.println(stepNumber + ". Applicazione principio di sussunzione...");
+
+        SubsumptionPrinciple subsumptionOptimizer = new SubsumptionPrinciple();
+        CNFConverter optimizedFormula = subsumptionOptimizer.applySubsumption(formula);
+        String optimizationInfo = subsumptionOptimizer.getOptimizationInfo();
+
+        LOGGER.info("Formula ottimizzata con sussunzione: " + optimizedFormula.toString());
+        LOGGER.info("Clausole eliminate: " + subsumptionOptimizer.getEliminatedClausesCount());
+
+        return new SubsumptionOptimizationResult(optimizedFormula, optimizationInfo);
+    }
+
+    /**
      * Risolve una formula CNF utilizzando l'algoritmo CDCL con gestione timeout.
      * Utilizza ExecutorService per controllo temporale e interruzione sicura.
      */
     private static SATResult solveSATWithTimeout(CNFConverter cnfFormula, int timeoutSeconds) {
-        String stepNumber = "4";
-        System.out.println(stepNumber + ". Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
+        System.out.println("4. Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         CDCLSolver solver = new CDCLSolver(cnfFormula);
@@ -337,7 +400,7 @@ public final class Main {
      * Elabora tutti i file .txt in una directory specificata.
      * Fornisce elaborazione batch con statistiche aggregate.
      */
-    private static void processDirectory(String dirPath, String outputPath, int timeoutSeconds, boolean useTseitin) {
+    private static void processDirectory(String dirPath, String outputPath, int timeoutSeconds, Configuration config) {
         LOGGER.info("Inizio elaborazione directory: " + dirPath);
 
         // Validazione directory input
@@ -352,7 +415,7 @@ public final class Main {
             }
 
             // Elaborazione sequenziale batch
-            BatchResult batchResult = processBatch(txtFiles, outputPath, timeoutSeconds, useTseitin);
+            BatchResult batchResult = processBatch(txtFiles, outputPath, timeoutSeconds, config);
 
             // Riepilogo finale
             displayBatchSummary(batchResult);
@@ -385,17 +448,25 @@ public final class Main {
     /**
      * Elabora sequenzialmente una lista di file con gestione errori isolata
      */
-    private static BatchResult processBatch(List<File> files, String outputPath, int timeoutSeconds, boolean useTseitin) {
+    private static BatchResult processBatch(List<File> files, String outputPath, int timeoutSeconds, Configuration config) {
         BatchResult result = new BatchResult(files.size());
 
         System.out.println("Timeout per file: " + timeoutSeconds + " secondi");
-        System.out.println("Conversione: " + (useTseitin ? "Tseitin (E-CNF)" : "CNF standard") + "\n");
+
+        // Mostra ottimizzazioni
+        List<String> activeOpts = new ArrayList<>();
+        if (config.useTseitin) activeOpts.add("Tseitin");
+        if (config.useSubsumption) activeOpts.add("Sussunzione");
+        if (config.useWatchedLiterals) activeOpts.add("Watched Literals");
+        if (config.useRestart) activeOpts.add("Restart");
+
+        System.out.println("Ottimizzazioni: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)) + "\n");
 
         for (File file : files) {
             try {
                 System.out.println("Elaborazione: " + file.getName());
 
-                ProcessResult fileResult = processFile(file.getAbsolutePath(), outputPath, timeoutSeconds, useTseitin);
+                ProcessResult fileResult = processFile(file.getAbsolutePath(), outputPath, timeoutSeconds, config);
 
                 // Aggiornamento statistiche batch
                 if (fileResult.isSuccess()) {
@@ -472,7 +543,7 @@ public final class Main {
         Files.createDirectories(statsDir);
 
         String baseFileName = getBaseFileName(originalFilePath);
-        Path statsFilePath = statsDir.resolve(baseFileName + ".stats");
+        Path statsFilePath = statsDir.resolve(baseFileName + "_tseitin.stats");
 
         try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
             writer.write(conversionInfo);
@@ -482,13 +553,32 @@ public final class Main {
     }
 
     /**
+     * Salva le statistiche di ottimizzazione sussunzione in file separato
+     */
+    private static void saveSubsumptionStatsToFile(String optimizationInfo, String originalFilePath, String outputPath, boolean isECNF) throws IOException {
+        String stepNumber = isECNF ? "3c" : "3b";
+        System.out.println(stepNumber + ". Salvataggio statistiche sussunzione...");
+
+        Path statsDir = getStatsDirectory(originalFilePath, outputPath);
+        Files.createDirectories(statsDir);
+
+        String baseFileName = getBaseFileName(originalFilePath);
+        Path statsFilePath = statsDir.resolve(baseFileName + "_subsumption.stats");
+
+        try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
+            writer.write(optimizationInfo);
+        }
+
+        LOGGER.info("Statistiche sussunzione salvate: " + statsFilePath);
+    }
+
+    /**
      * Salva i risultati SAT completi con formato strutturato
      */
     private static void saveResultsToFile(SATResult result, CNFConverter cnfFormula,
                                           String originalFilePath, String outputPath,
-                                          String conversionInfo, boolean useTseitin) throws IOException {
-        String stepNumber = useTseitin ? "5" : "5";
-        System.out.println(stepNumber + ". Salvataggio risultati...");
+                                          String conversionInfo, Configuration config) throws IOException {
+        System.out.println("5. Salvataggio risultati...");
 
         Path resultDir = getResultDirectory(originalFilePath, outputPath);
         Files.createDirectories(resultDir);
@@ -497,7 +587,7 @@ public final class Main {
         Path resultFilePath = resultDir.resolve(baseFileName + ".result");
 
         try (FileWriter writer = new FileWriter(resultFilePath.toFile())) {
-            writeCompleteResult(writer, result, originalFilePath, cnfFormula, conversionInfo, useTseitin);
+            writeCompleteResult(writer, result, originalFilePath, cnfFormula, conversionInfo, config);
         }
 
         LOGGER.info("Risultati salvati: " + resultFilePath);
@@ -508,7 +598,7 @@ public final class Main {
      */
     private static void writeCompleteResult(FileWriter writer, SATResult result,
                                             String originalFilePath, CNFConverter cnfFormula,
-                                            String conversionInfo, boolean useTseitin) throws IOException {
+                                            String conversionInfo, Configuration config) throws IOException {
         // Header del report
         writer.write("-------------------\n");
         writer.write("| RISOLUZIONE SAT |\n");
@@ -516,7 +606,7 @@ public final class Main {
         writer.write("-> File originale: " + Paths.get(originalFilePath).getFileName() + "\n");
         writer.write("-> File CNF: " + getBaseFileName(originalFilePath) + ".cnf\n");
 
-        if (useTseitin) {
+        if (config.useTseitin) {
             writer.write("-> File E-CNF: " + getBaseFileName(originalFilePath) + ".ecnf\n");
             writer.write("\n");
             writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".ecnf\n");
@@ -529,9 +619,9 @@ public final class Main {
 
         // Contenuto principale
         if (result.isSatisfiable()) {
-            writeSATResult(writer, result, useTseitin);
+            writeSATResult(writer, result, config.useTseitin);
         } else {
-            writeUNSATResult(writer, result, useTseitin);
+            writeUNSATResult(writer, result, config.useTseitin);
         }
 
         // Statistiche finali
@@ -597,11 +687,11 @@ public final class Main {
     /**
      * Gestisce il caso di timeout durante risoluzione SAT
      */
-    private static ProcessResult handleTimeoutCase(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) throws IOException {
+    private static ProcessResult handleTimeoutCase(String filePath, String outputPath, int timeoutSeconds, Configuration config) throws IOException {
         System.out.println("TIMEOUT: Superato il limite di " + timeoutSeconds + " secondi");
 
         // Salva report specifico per timeout
-        saveTimeoutResult(filePath, outputPath, timeoutSeconds, useTseitin);
+        saveTimeoutResult(filePath, outputPath, timeoutSeconds, config);
 
         return ProcessResult.timeout();
     }
@@ -609,7 +699,7 @@ public final class Main {
     /**
      * Crea un report specifico per casi di timeout
      */
-    private static void saveTimeoutResult(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) throws IOException {
+    private static void saveTimeoutResult(String filePath, String outputPath, int timeoutSeconds, Configuration config) throws IOException {
         Path resultDir = getResultDirectory(filePath, outputPath);
         Files.createDirectories(resultDir);
 
@@ -623,7 +713,7 @@ public final class Main {
             writer.write("-> File originale: " + Paths.get(filePath).getFileName() + "\n");
             writer.write("-> File CNF: " + baseFileName + ".cnf\n");
 
-            if (useTseitin) {
+            if (config.useTseitin) {
                 writer.write("-> File E-CNF: " + baseFileName + ".ecnf\n");
                 writer.write("\n");
                 writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".ecnf\n");
@@ -709,7 +799,7 @@ public final class Main {
     }
 
     /**
-     * Ottiene la directory per file statistiche Tseitin (creata dinamicamente)
+     * Ottiene la directory per file statistiche (creata dinamicamente)
      */
     private static Path getStatsDirectory(String originalFilePath, String outputPath) {
         if (outputPath != null) {
@@ -834,21 +924,30 @@ public final class Main {
         System.out.println("  -o <directory>  Directory di output personalizzata (opzionale)");
         System.out.println("  -t <secondi>    Timeout per ogni formula (min: " + MIN_TIMEOUT_SECONDS +
                 ", default: " + DEFAULT_TIMEOUT_SECONDS + ")");
-        System.out.println("  -convert=tseitin Usa trasformazione di Tseitin per E-CNF (opzionale)");
+        System.out.println("  -opt=<flags>    Attiva ottimizzazioni specifiche:");
+        System.out.println("                  s = Principio di sussunzione");
+        System.out.println("                  w = Watched literals (futuro)");
+        System.out.println("                  r = Tecniche di restart (futuro)");
+        System.out.println("                  t = Trasformazione di Tseitin");
+        System.out.println("                  all = Tutte le ottimizzazioni");
         System.out.println("  -h              Mostra questa guida\n");
 
         System.out.println("ESEMPI:");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt");
-        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -convert=tseitin");
-        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30");
-        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -convert=tseitin -t 60\n");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=t");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=st");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=all");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30 -opt=s");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -opt=sr -t 60\n");
 
         System.out.println("NOTE:");
         System.out.println("  • Le opzioni -f e -d sono mutuamente esclusive");
         System.out.println("  • Il solver supporta formule con operatori: AND, OR, NOT, ->, <->");
         System.out.println("  • Output automatico: file .cnf e .result nelle directory CNF/ e RESULT/");
-        System.out.println("  • Con -convert=tseitin: file .ecnf e .stats nelle directory E-CNF/ e STATS/");
-        System.out.println("  • Tseitin è raccomandato per formule complesse (>8 operatori)\n");
+        System.out.println("  • Con -opt=t: file .ecnf e .stats nelle directory E-CNF/ e STATS/");
+        System.out.println("  • Con -opt=s: file .stats nella directory STATS/ per sussunzione");
+        System.out.println("  • Tseitin è raccomandato per formule complesse (>8 operatori)");
+        System.out.println("  • Sussunzione elimina clausole ridondanti che sono sovrainsieme di altre\n");
         System.out.println("=====================================\n");
     }
 
@@ -866,13 +965,20 @@ public final class Main {
         final boolean isFileMode;
         final int timeoutSeconds;
         final boolean useTseitin;
+        final boolean useSubsumption;
+        final boolean useWatchedLiterals;
+        final boolean useRestart;
 
-        Configuration(String inputPath, String outputPath, boolean isFileMode, int timeoutSeconds, boolean useTseitin) {
+        Configuration(String inputPath, String outputPath, boolean isFileMode, int timeoutSeconds,
+                      boolean useTseitin, boolean useSubsumption, boolean useWatchedLiterals, boolean useRestart) {
             this.inputPath = inputPath;
             this.outputPath = outputPath;
             this.isFileMode = isFileMode;
             this.timeoutSeconds = timeoutSeconds;
             this.useTseitin = useTseitin;
+            this.useSubsumption = useSubsumption;
+            this.useWatchedLiterals = useWatchedLiterals;
+            this.useRestart = useRestart;
         }
     }
 
@@ -890,41 +996,43 @@ public final class Main {
             boolean isFileMode = false;
             boolean isDirectoryMode = false;
             boolean useTseitin = false;
+            boolean useSubsumption = false;
+            boolean useWatchedLiterals = false;
+            boolean useRestart = false;
             int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
 
             for (int i = 0; i < args.length; i++) {
-                switch (args[i]) {
-                    case HELP_PARAM -> {
-                        printHelp();
-                        return null;
+                if (args[i].equals(HELP_PARAM)) {
+                    printHelp();
+                    return null;
+                } else if (args[i].equals(FILE_PARAM)) {
+                    if (isDirectoryMode) {
+                        throw new IllegalArgumentException("Impossibile specificare sia -f che -d");
                     }
-                    case FILE_PARAM -> {
-                        if (isDirectoryMode) {
-                            throw new IllegalArgumentException("Impossibile specificare sia -f che -d");
-                        }
-                        inputPath = getNextArgument(args, i++, "file");
-                        validateFileExists(inputPath);
-                        isFileMode = true;
+                    inputPath = getNextArgument(args, i++, "file");
+                    validateFileExists(inputPath);
+                    isFileMode = true;
+                } else if (args[i].equals(DIR_PARAM)) {
+                    if (isFileMode) {
+                        throw new IllegalArgumentException("Impossibile specificare sia -f che -d");
                     }
-                    case DIR_PARAM -> {
-                        if (isFileMode) {
-                            throw new IllegalArgumentException("Impossibile specificare sia -f che -d");
-                        }
-                        inputPath = getNextArgument(args, i++, "directory");
-                        validateDirectoryExists(inputPath);
-                        isDirectoryMode = true;
-                    }
-                    case OUTPUT_PARAM -> {
-                        outputPath = getNextArgument(args, i++, "directory di output");
-                        validateOrCreateOutputDirectory(outputPath);
-                    }
-                    case TIMEOUT_PARAM -> {
-                        timeoutSeconds = parseAndValidateTimeout(args, i++);
-                    }
-                    case CONVERT_PARAM -> {
-                        useTseitin = true;
-                    }
-                    default -> throw new IllegalArgumentException("Parametro sconosciuto: " + args[i]);
+                    inputPath = getNextArgument(args, i++, "directory");
+                    validateDirectoryExists(inputPath);
+                    isDirectoryMode = true;
+                } else if (args[i].equals(OUTPUT_PARAM)) {
+                    outputPath = getNextArgument(args, i++, "directory di output");
+                    validateOrCreateOutputDirectory(outputPath);
+                } else if (args[i].equals(TIMEOUT_PARAM)) {
+                    timeoutSeconds = parseAndValidateTimeout(args, i++);
+                } else if (args[i].startsWith(OPT_PARAM)) {
+                    String optValue = args[i].substring(OPT_PARAM.length());
+                    OptimizationFlags flags = parseOptimizationFlags(optValue);
+                    useTseitin = flags.tseitin;
+                    useSubsumption = flags.subsumption;
+                    useWatchedLiterals = flags.watchedLiterals;
+                    useRestart = flags.restart;
+                } else {
+                    throw new IllegalArgumentException("Parametro sconosciuto: " + args[i]);
                 }
             }
 
@@ -933,7 +1041,43 @@ public final class Main {
                 throw new IllegalArgumentException("Specificare un file (-f) o directory (-d)");
             }
 
-            return new Configuration(inputPath, outputPath, isFileMode, timeoutSeconds, useTseitin);
+            return new Configuration(inputPath, outputPath, isFileMode, timeoutSeconds,
+                    useTseitin, useSubsumption, useWatchedLiterals, useRestart);
+        }
+
+        /**
+         * Parsa le flag di ottimizzazione
+         */
+        private OptimizationFlags parseOptimizationFlags(String flagsStr) {
+            if (flagsStr == null || flagsStr.trim().isEmpty()) {
+                throw new IllegalArgumentException("Valore -opt vuoto");
+            }
+
+            boolean tseitin = false;
+            boolean subsumption = false;
+            boolean watchedLiterals = false;
+            boolean restart = false;
+
+            if (flagsStr.equals(OPT_ALL)) {
+                // Tutte le ottimizzazioni
+                tseitin = true;
+                subsumption = true;
+                watchedLiterals = true;
+                restart = true;
+            } else {
+                // Parsing singole flag
+                for (char flag : flagsStr.toCharArray()) {
+                    switch (String.valueOf(flag)) {
+                        case OPT_TSEITIN -> tseitin = true;
+                        case OPT_SUBSUMPTION -> subsumption = true;
+                        case OPT_WATCHED_LITERALS -> watchedLiterals = true;
+                        case OPT_RESTART -> restart = true;
+                        default -> throw new IllegalArgumentException("Flag ottimizzazione non riconosciuta: " + flag);
+                    }
+                }
+            }
+
+            return new OptimizationFlags(tseitin, subsumption, watchedLiterals, restart);
         }
 
         /**
@@ -1018,6 +1162,23 @@ public final class Main {
     }
 
     /**
+     * Flag di ottimizzazione parsate
+     */
+    private static class OptimizationFlags {
+        final boolean tseitin;
+        final boolean subsumption;
+        final boolean watchedLiterals;
+        final boolean restart;
+
+        OptimizationFlags(boolean tseitin, boolean subsumption, boolean watchedLiterals, boolean restart) {
+            this.tseitin = tseitin;
+            this.subsumption = subsumption;
+            this.watchedLiterals = watchedLiterals;
+            this.restart = restart;
+        }
+    }
+
+    /**
      * Risultato elaborazione singolo file
      */
     private static class ProcessResult {
@@ -1081,6 +1242,19 @@ public final class Main {
             this.ecnfFormula = ecnfFormula;
             this.ecnfString = ecnfString;
             this.conversionInfo = conversionInfo;
+        }
+    }
+
+    /**
+     * Risultato ottimizzazione sussunzione
+     */
+    private static class SubsumptionOptimizationResult {
+        final CNFConverter optimizedFormula;
+        final String optimizationInfo;
+
+        SubsumptionOptimizationResult(CNFConverter optimizedFormula, String optimizationInfo) {
+            this.optimizedFormula = optimizedFormula;
+            this.optimizationInfo = optimizationInfo;
         }
     }
 

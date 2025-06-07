@@ -1,4 +1,4 @@
-package org.sat.optimization;
+package org.sat.optionalfeatures;
 
 import org.sat.cnf.CNFConverter;
 import java.util.*;
