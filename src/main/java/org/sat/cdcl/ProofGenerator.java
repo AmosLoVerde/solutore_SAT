@@ -196,7 +196,7 @@ public class ProofGenerator {
         }
 
         if (clause.isEmpty()) {
-            return "[]";
+            return "[]\n";
         }
 
         if (clause.size() == 1) {
