@@ -18,8 +18,8 @@ import java.util.logging.Level;
  *
  * ESEMPIO:
  * Formula: (P) & (!R | !Q) & (P | Q | !R) & (A | !R | B | !Q) & (R | !Q)
- * - (P) sussume (P | Q | !R) → elimina (P | Q | !R)
- * - (!R | !Q) sussume (A | !R | B | !Q) → elimina (A | !R | B | !Q)
+ * - (P) sussume (P | Q | !R) => elimina (P | Q | !R)
+ * - (!R | !Q) sussume (A | !R | B | !Q) => elimina (A | !R | B | !Q)
  * Risultato: (P) & (!R | !Q) & (R | !Q)
  *
  */
@@ -268,24 +268,22 @@ public class SubsumptionPrinciple {
 
                 // Verifica sussunzione in entrambe le direzioni
                 if (subsumes(clause1, clause2)) {
-                    // clause1 sussume clause2 → elimina clause2
+                    // clause1 sussume clause2 => elimina clause2
                     clausesToEliminate.add(j);
                     eliminatedClauses++;
 
                     optimizationLog.append("SUSSUNZIONE: ").append(clause1)
-                            .append(" sussume ").append(clause2)
-                            .append(" → elimina ").append(clause2).append("\n");
+                            .append(" sussume ").append(clause2).append("\n");
 
                     LOGGER.fine("Clausola " + clause1 + " sussume " + clause2);
 
                 } else if (subsumes(clause2, clause1)) {
-                    // clause2 sussume clause1 → elimina clause1
+                    // clause2 sussume clause1 => elimina clause1
                     clausesToEliminate.add(i);
                     eliminatedClauses++;
 
                     optimizationLog.append("SUSSUNZIONE: ").append(clause2)
-                            .append(" sussume ").append(clause1)
-                            .append(" → elimina ").append(clause1).append("\n");
+                            .append(" sussume ").append(clause1).append("\n");
 
                     LOGGER.fine("Clausola " + clause2 + " sussume " + clause1);
                     break; // clause1 eliminata, passa alla prossima
@@ -328,7 +326,7 @@ public class SubsumptionPrinciple {
         optimizationLog.append("\n=== RICOSTRUZIONE FORMULA ===\n");
 
         if (optimizedClauseSets.isEmpty()) {
-            optimizationLog.append("Nessuna clausola rimanente → formula TRUE\n");
+            optimizationLog.append("Nessuna clausola rimanente => formula TRUE\n");
             return new CNFConverter("TRUE");
         }
 
@@ -443,7 +441,11 @@ public class SubsumptionPrinciple {
      */
     public String getOptimizationInfo() {
         StringBuilder info = new StringBuilder();
-        info.append("=== SUBSUMPTION OPTIMIZATION REPORT ===\n");
+
+        // Header standardizzato
+        info.append("----------------------------\n");
+        info.append("| PRINCIPIO DI SUSSUNZIONE |\n");
+        info.append("----------------------------\n");
         info.append("Clausole originali: ").append(originalClauseCount).append("\n");
         info.append("Clausole eliminate: ").append(eliminatedClauses).append("\n");
         info.append("Clausole finali: ").append(originalClauseCount - eliminatedClauses).append("\n");
@@ -451,11 +453,66 @@ public class SubsumptionPrinciple {
         if (originalClauseCount > 0) {
             double reductionPercentage = (double) eliminatedClauses / originalClauseCount * 100;
             info.append("Riduzione percentuale: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
+        } else {
+            info.append("Riduzione percentuale: 0.0%\n");
         }
 
-        info.append("\nDettagli ottimizzazione:\n");
-        info.append(optimizationLog.toString());
-        info.append("======================================\n");
+        info.append("\n");
+
+        // Estrai dettagli dal log di ottimizzazione
+        String logContent = optimizationLog.toString();
+
+        // Sezione inizio sussunzione
+        if (logContent.contains("Formula originale:")) {
+            info.append("=== INIZIO SUSSUNZIONE ===\n");
+
+            // Estrai formula originale
+            String[] lines = logContent.split("\n");
+            for (String line : lines) {
+                if (line.contains("Formula originale:")) {
+                    String formula = line.substring(line.indexOf(":") + 1).trim();
+                    info.append("Formula originale: ").append(formula).append("\n");
+                    break;
+                }
+            }
+
+            // Estrai clausole estratte
+            for (String line : lines) {
+                if (line.contains("Clausole estratte:")) {
+                    info.append("Clausole estratte: ").append(line.substring(line.indexOf(":") + 1).trim()).append("\n");
+                    break;
+                }
+            }
+
+            // Aggiungi elenco clausole estratte
+            boolean inClauseList = false;
+            for (String line : lines) {
+                if (line.trim().matches("\\d+\\..*")) {
+                    if (!inClauseList) {
+                        inClauseList = true;
+                    }
+                    info.append(line.trim()).append("\n");
+                } else if (inClauseList && line.contains("===")) {
+                    break;
+                }
+            }
+
+            info.append("\n");
+        }
+
+        // Sezione sussunzioni eseguite
+        if (logContent.contains("SUSSUNZIONE:")) {
+            info.append("=== SUSSUNZIONI ESEGUITE ===\n");
+
+            String[] lines = logContent.split("\n");
+            for (String line : lines) {
+                if (line.contains("SUSSUNZIONE:")) {
+                    // Estrai e formatta la sussunzione
+                    String sussunzione = line.substring(line.indexOf("SUSSUNZIONE:") + 12).trim();
+                    info.append(sussunzione).append("\n");
+                }
+            }
+        }
 
         return info.toString();
     }

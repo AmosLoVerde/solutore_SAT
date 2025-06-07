@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.7.1] - 2025-06-07
+### Fixed
+- Migliorata la struttura e l’organizzazione dei file `.stats` nella cartella `STATS`.
+- Aggiunto il file `opzioni_attive.txt` per indicare le opzioni attive durante
+  l’esecuzione del solutore.
+
+
 ## [1.7.0] - 2025-06-07
 ### Added
 - Implementato il principio di sussunzione nel file `SubsumptionPrinciple.java`,

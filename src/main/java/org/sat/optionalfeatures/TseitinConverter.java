@@ -148,7 +148,7 @@ public class TseitinConverter {
     private void logConversionStart(CNFConverter cnfFormula, int complexity) {
         String formulaStr = safeToString(cnfFormula);
         conversionLog.append("Formula originale: ").append(formulaStr).append("\n");
-        conversionLog.append("Complessità calcolata: ").append(complexity).append("\n");
+        conversionLog.append("Complessità calcolata: ").append(complexity).append("\n\n");
 
         LOGGER.fine("Inizio conversione Tseitin - Complessità: " + complexity);
     }
@@ -214,7 +214,7 @@ public class TseitinConverter {
      * Esegue conversione Tseitin completa
      */
     private CNFConverter performTseitinConversion(CNFConverter cnfFormula) {
-        conversionLog.append("Applicazione trasformazione Tseitin...\n");
+        //conversionLog.append("Applicazione trasformazione Tseitin...\n");
 
         // Fase 1: Generazione clausole Tseitin
         String mainVariable = generateTseitinClauses(cnfFormula);

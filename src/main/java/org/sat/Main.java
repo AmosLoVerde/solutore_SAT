@@ -40,7 +40,7 @@ import java.util.stream.Stream;
  * - Principio di sussunzione per eliminazione clausole ridondanti
  *
  * @author Amos Lo Verde
- * @version 1.7.0
+ * @version 1.7.1
  */
 public final class Main {
 
@@ -274,13 +274,18 @@ public final class Main {
             SATResult satResult = solveSATWithTimeout(formulaToSolve, timeoutSeconds);
 
             if (satResult == null) {
+                // Salva file opzioni attive anche per timeout
+                saveActiveOptionsFile(config, filePath, outputPath);
                 return handleTimeoutCase(filePath, outputPath, timeoutSeconds, config);
             }
 
             // STEP 7: Salvataggio risultati
             saveResultsToFile(satResult, formulaToSolve, filePath, outputPath, conversionInfo, config);
 
-            // STEP 8: Visualizzazione statistiche
+            // STEP 8: Salvataggio file opzioni attive (se necessario)
+            saveActiveOptionsFile(config, filePath, outputPath);
+
+            // STEP 9: Visualizzazione statistiche
             displayFinalStatistics(satResult, formulaToSolve);
 
             return ProcessResult.success();
@@ -539,11 +544,11 @@ public final class Main {
     private static void saveTseitinStatsToFile(String conversionInfo, String originalFilePath, String outputPath) throws IOException {
         System.out.println("3c. Salvataggio statistiche conversione Tseitin...");
 
-        Path statsDir = getStatsDirectory(originalFilePath, outputPath);
-        Files.createDirectories(statsDir);
+        Path tseitinStatsDir = getStatsDirectory(originalFilePath, outputPath).resolve("TSEITIN");
+        Files.createDirectories(tseitinStatsDir);
 
         String baseFileName = getBaseFileName(originalFilePath);
-        Path statsFilePath = statsDir.resolve(baseFileName + "_tseitin.stats");
+        Path statsFilePath = tseitinStatsDir.resolve(baseFileName + ".stats");
 
         try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
             writer.write(conversionInfo);
@@ -559,17 +564,58 @@ public final class Main {
         String stepNumber = isECNF ? "3c" : "3b";
         System.out.println(stepNumber + ". Salvataggio statistiche sussunzione...");
 
-        Path statsDir = getStatsDirectory(originalFilePath, outputPath);
-        Files.createDirectories(statsDir);
+        Path subsumptionStatsDir = getStatsDirectory(originalFilePath, outputPath).resolve("SUBSUMPTION");
+        Files.createDirectories(subsumptionStatsDir);
 
         String baseFileName = getBaseFileName(originalFilePath);
-        Path statsFilePath = statsDir.resolve(baseFileName + "_subsumption.stats");
+        Path statsFilePath = subsumptionStatsDir.resolve(baseFileName + ".stats");
 
         try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
             writer.write(optimizationInfo);
         }
 
         LOGGER.info("Statistiche sussunzione salvate: " + statsFilePath);
+    }
+
+    /**
+     * Salva file con opzioni attive nella directory STATS
+     */
+    private static void saveActiveOptionsFile(Configuration config, String originalFilePath, String outputPath) throws IOException {
+        // Verifica se ci sono ottimizzazioni attive
+        List<String> activeOptions = new ArrayList<>();
+        if (config.useTseitin) activeOptions.add("TSEITIN");
+        if (config.useSubsumption) activeOptions.add("SUBSUMPTION");
+        if (config.useWatchedLiterals) activeOptions.add("WATCHED_LITERALS");
+        if (config.useRestart) activeOptions.add("RESTART");
+
+        // Salva solo se ci sono opzioni attive
+        if (!activeOptions.isEmpty()) {
+            Path statsDir = getStatsDirectory(originalFilePath, outputPath);
+            Files.createDirectories(statsDir);
+
+            Path optionsFilePath = statsDir.resolve("opzioni_attive.txt");
+
+            try (FileWriter writer = new FileWriter(optionsFilePath.toFile())) {
+                writer.write("------------------\n");
+                writer.write("| OPZIONI ATTIVE |\n");
+                writer.write("------------------\n\n");
+
+                if (config.useTseitin) {
+                    writer.write("- TSEITIN (flag <t>): Trasformazione in formula equisoddisfacibile E-CNF.\n");
+                }
+                if (config.useSubsumption) {
+                    writer.write("- SUBSUMPTION (flag <s>): Eliminazione delle clausole che contengono clausole più piccole.\n");
+                }
+                if (config.useWatchedLiterals) {
+                    writer.write("- WATCHED_LITERALS (flag <w>): Ottimizzazione unit propagation con letterali osservati.\n");
+                }
+                if (config.useRestart) {
+                    writer.write("- RESTART (flag <r>): Tecniche di riavvio per evitare stalli durante la ricerca.\n");
+                }
+            }
+
+            LOGGER.info("File opzioni attive salvato: " + optionsFilePath);
+        }
     }
 
     /**
@@ -944,8 +990,10 @@ public final class Main {
         System.out.println("  • Le opzioni -f e -d sono mutuamente esclusive");
         System.out.println("  • Il solver supporta formule con operatori: AND, OR, NOT, ->, <->");
         System.out.println("  • Output automatico: file .cnf e .result nelle directory CNF/ e RESULT/");
-        System.out.println("  • Con -opt=t: file .ecnf e .stats nelle directory E-CNF/ e STATS/");
-        System.out.println("  • Con -opt=s: file .stats nella directory STATS/ per sussunzione");
+        System.out.println("  • Con ottimizzazioni attive:");
+        System.out.println("    - File .ecnf nella directory E-CNF/ (con -opt=t)");
+        System.out.println("    - Statistiche organizzate in STATS/TSEITIN/ e STATS/SUBSUMPTION/");
+        System.out.println("    - File opzioni_attive.txt nella directory STATS/");
         System.out.println("  • Tseitin è raccomandato per formule complesse (>8 operatori)");
         System.out.println("  • Sussunzione elimina clausole ridondanti che sono sovrainsieme di altre\n");
         System.out.println("=====================================\n");
