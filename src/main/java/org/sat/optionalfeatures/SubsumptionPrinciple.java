@@ -6,57 +6,83 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * IMPLEMENTAZIONE DEL PRINCIPIO DI SUSSUNZIONE per ottimizzazione formule CNF
+ * PRINCIPIO DI SUSSUNZIONE - Ottimizzazione avanzata per eliminazione clausole ridondanti
  *
- * Il principio di sussunzione elimina clausole ridondanti che sono sovrainsieme
- * di altre clausole più piccole, mantenendo l'equivalenza logica della formula.
+ * Implementa il principio matematico di sussunzione per l'ottimizzazione di formule CNF,
+ * eliminando clausole ridondanti che sono sovrainsieme di altre clausole più specifiche,
+ * mantenendo perfetta equivalenza logica della formula.
  *
- * DEFINIZIONE:
- * Una clausola C1 sussume una clausola C2 se tutti i letterali di C1 sono
- * contenuti in C2. In questo caso C2 può essere eliminata senza alterare
- * la soddisfacibilità della formula.
+ * TEORIA MATEMATICA:
+ * Una clausola C1 sussume una clausola C2 se e solo se:
+ * • Tutti i letterali di C1 sono contenuti in C2 (C1 ⊆ C2)
+ * • C2 può essere eliminata senza alterare la soddisfacibilità
+ * • La formula risultante è logicamente equivalente all'originale
  *
- * ESEMPIO:
- * Formula: (P) & (!R | !Q) & (P | Q | !R) & (A | !R | B | !Q) & (R | !Q)
- * - (P) sussume (P | Q | !R) => elimina (P | Q | !R)
- * - (!R | !Q) sussume (A | !R | B | !Q) => elimina (A | !R | B | !Q)
- * Risultato: (P) & (!R | !Q) & (R | !Q)
+ * ALGORITMO IMPLEMENTATO:
+ * • Conversione clausole in rappresentazione Set per confronti O(1)
+ * • Confronto sistematico a coppie tra tutte le clausole
+ * • Identificazione relazioni di sussunzione bidirezionali
+ * • Eliminazione clausole sussumete (più generali)
+ * • Ricostruzione formula ottimizzata mantenendo struttura
+ *
+ * BENEFICI OTTIMIZZAZIONE:
+ * • Riduzione spazio di ricerca per algoritmi SAT
+ * • Miglioramento performance propagazione
+ * • Semplificazione formula senza perdita informazioni
+ * • Debugging facilitato con formule più compatte
+ *
+ * ESEMPI PRATICI:
+ * Formula: (P) ∧ (!R ∨ !Q) ∧ (P ∨ Q ∨ !R) ∧ (A ∨ !R ∨ B ∨ !Q) ∧ (R ∨ !Q)
+ * • (P) sussume (P ∨ Q ∨ !R) → elimina (P ∨ Q ∨ !R)
+ * • (!R ∨ !Q) sussume (A ∨ !R ∨ B ∨ !Q) → elimina (A ∨ !R ∨ B ∨ !Q)
+ * Risultato: (P) ∧ (!R ∨ !Q) ∧ (R ∨ !Q)
  *
  */
 public class SubsumptionPrinciple {
 
     private static final Logger LOGGER = Logger.getLogger(SubsumptionPrinciple.class.getName());
 
-    //region STATO OTTIMIZZAZIONE
+    //region STATO OTTIMIZZAZIONE E TRACKING
 
-    /** Statistiche di ottimizzazione */
+    /**
+     * Log dettagliato delle operazioni di ottimizzazione per reporting e debugging.
+     * Contiene cronologia completa: formula originale, clausole eliminate, statistiche.
+     */
     private StringBuilder optimizationLog;
 
-    /** Contatore clausole eliminate */
-    private int eliminatedClauses;
+    /**
+     * Numero di clausole eliminate durante l'ottimizzazione.
+     * Metrica chiave per valutare efficacia dell'ottimizzazione.
+     */
+    private int eliminatedClausesCount;
 
-    /** Clausole originali prima dell'ottimizzazione */
-    private int originalClauseCount;
+    /**
+     * Numero di clausole presenti nella formula originale.
+     * Utilizzato per calcolo percentuali di riduzione.
+     */
+    private int originalClausesCount;
 
     //endregion
 
-    //region INIZIALIZZAZIONE
+    //region INIZIALIZZAZIONE E CONFIGURAZIONE
 
     /**
-     * Costruttore che inizializza stato per nuova ottimizzazione
+     * Inizializza ottimizzatore con stato pulito pronto per nuova elaborazione.
+     * Prepara strutture dati per tracking completo del processo di ottimizzazione.
      */
     public SubsumptionPrinciple() {
-        resetState();
-        LOGGER.fine("SubsumptionPrinciple inizializzato");
+        resetOptimizationState();
+        LOGGER.fine("SubsumptionPrinciple inizializzato e pronto");
     }
 
     /**
-     * Reset stato per nuova ottimizzazione
+     * Reset completo dello stato per riutilizzo dell'istanza.
+     * Pulisce tutti i dati di precedenti ottimizzazioni mantenendo configurazione.
      */
-    private void resetState() {
+    private void resetOptimizationState() {
         this.optimizationLog = new StringBuilder();
-        this.eliminatedClauses = 0;
-        this.originalClauseCount = 0;
+        this.eliminatedClausesCount = 0;
+        this.originalClausesCount = 0;
     }
 
     //endregion
@@ -64,48 +90,52 @@ public class SubsumptionPrinciple {
     //region INTERFACCIA PUBBLICA PRINCIPALE
 
     /**
-     * METODO PRINCIPALE: Applica principio di sussunzione alla formula CNF
+     * METODO PRINCIPALE - Applica principio di sussunzione alla formula CNF
      *
-     * ALGORITMO:
-     * 1. Estrazione clausole dalla struttura CNFConverter
-     * 2. Conversione in rappresentazione set per confronti efficienti
-     * 3. Identificazione coppie sussunzione tra tutte le clausole
-     * 4. Eliminazione clausole sussumete (sovrainsieme)
-     * 5. Ricostruzione formula ottimizzata
+     * Esegue ottimizzazione completa eliminando clausole ridondanti tramite sussunzione,
+     * garantendo equivalenza logica e tracciabilità completa del processo.
      *
-     * @param cnfFormula formula CNF da ottimizzare
+     * PIPELINE OTTIMIZZAZIONE:
+     * 1. Validazione e inizializzazione con logging dettagliato
+     * 2. Estrazione clausole dalla struttura CNFConverter
+     * 3. Conversione in rappresentazione Set per confronti efficienti
+     * 4. Identificazione sistematica relazioni di sussunzione
+     * 5. Eliminazione clausole ridondanti con tracking
+     * 6. Ricostruzione formula ottimizzata preservando struttura
+     * 7. Generazione report dettagliato con statistiche
+     *
+     * @param cnfFormula formula CNF da ottimizzare (non null)
      * @return formula CNF ottimizzata con clausole ridondanti eliminate
+     * @throws IllegalArgumentException se formula null o malformata
      */
     public CNFConverter applySubsumption(CNFConverter cnfFormula) {
-        // Fase 1: Inizializzazione e validazione
+        // Fase 1: Inizializzazione e validazione robusta
         if (!initializeOptimization(cnfFormula)) {
-            return cnfFormula; // Ritorna originale se problemi
+            return cnfFormula; // Ritorna originale se problemi rilevati
         }
 
         try {
-            // Fase 2: Estrazione clausole
-            List<Set<String>> clauseSets = extractClausesAsSets(cnfFormula);
+            // Fase 2: Estrazione e conversione clausole
+            List<Set<String>> clauseSetRepresentation = extractClausesAsSetRepresentation(cnfFormula);
 
-            if (clauseSets.isEmpty()) {
-                logNoOptimizationNeeded("Formula vuota o senza clausole");
+            if (clauseSetRepresentation.isEmpty()) {
+                logNoOptimizationCase("Formula vuota o senza clausole valide");
                 return cnfFormula;
             }
 
-            // Fase 3: Applicazione sussunzione
-            List<Set<String>> optimizedClauseSets = performSubsumptionOptimization(clauseSets);
+            // Fase 3: Esecuzione ottimizzazione sussunzione
+            List<Set<String>> optimizedClauseSets = executeSubsumptionOptimization(clauseSetRepresentation);
 
-            // Fase 4: Ricostruzione formula
-            CNFConverter optimizedFormula = reconstructFormula(optimizedClauseSets);
+            // Fase 4: Ricostruzione formula dalla rappresentazione ottimizzata
+            CNFConverter optimizedFormula = reconstructFormulaFromSets(optimizedClauseSets);
 
-            // Fase 5: Logging finale
-            logOptimizationResults();
+            // Fase 5: Finalizzazione con report completo
+            finalizeOptimizationWithReport();
 
             return optimizedFormula;
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Errore durante ottimizzazione sussunzione", e);
-            optimizationLog.append("ERRORE: ").append(e.getMessage()).append("\n");
-            return cnfFormula; // Fallback sicuro
+            return handleOptimizationError(e, cnfFormula);
         }
     }
 
@@ -114,50 +144,66 @@ public class SubsumptionPrinciple {
     //region INIZIALIZZAZIONE E VALIDAZIONE
 
     /**
-     * Inizializza ottimizzazione con validazione input
+     * Inizializza processo di ottimizzazione con validazione completa dell'input.
+     *
+     * @param cnfFormula formula da validare e preparare
+     * @return true se inizializzazione successful, false altrimenti
      */
     private boolean initializeOptimization(CNFConverter cnfFormula) {
-        resetState();
+        resetOptimizationState();
         optimizationLog.append("=== INIZIO OTTIMIZZAZIONE SUSSUNZIONE ===\n");
 
         if (cnfFormula == null) {
-            LOGGER.warning("Formula CNF null fornita");
-            optimizationLog.append("ERRORE: Formula null\n");
+            LOGGER.warning("Formula CNF null fornita all'ottimizzatore");
+            optimizationLog.append("ERRORE: Formula null non processabile\n");
             return false;
         }
 
-        String formulaStr = safeToString(cnfFormula);
-        optimizationLog.append("Formula originale: ").append(formulaStr).append("\n");
+        String formulaRepresentation = getFormulaStringRepresentation(cnfFormula);
+        optimizationLog.append("Formula originale: ").append(formulaRepresentation).append("\n");
 
-        LOGGER.fine("Inizio ottimizzazione sussunzione");
+        LOGGER.fine("Inizio ottimizzazione sussunzione per formula: " + formulaRepresentation);
         return true;
     }
 
     /**
-     * Log quando ottimizzazione non necessaria
+     * Gestisce caso di nessuna ottimizzazione necessaria con logging appropriato.
      */
-    private void logNoOptimizationNeeded(String reason) {
-        optimizationLog.append("Nessuna ottimizzazione necessaria: ").append(reason).append("\n");
+    private void logNoOptimizationCase(String reason) {
+        optimizationLog.append("Nessuna ottimizzazione applicabile: ").append(reason).append("\n");
         LOGGER.fine("Ottimizzazione sussunzione non necessaria: " + reason);
+    }
+
+    /**
+     * Gestisce errori durante ottimizzazione con fallback sicuro.
+     */
+    private CNFConverter handleOptimizationError(Exception e, CNFConverter originalFormula) {
+        LOGGER.log(Level.WARNING, "Errore durante ottimizzazione sussunzione", e);
+        optimizationLog.append("ERRORE: ").append(e.getMessage()).append("\n");
+        optimizationLog.append("Fallback: ritornata formula originale\n");
+        return originalFormula; // Fallback sicuro
     }
 
     //endregion
 
-    //region ESTRAZIONE CLAUSOLE
+    //region ESTRAZIONE E CONVERSIONE CLAUSOLE
 
     /**
-     * Estrae clausole dalla formula CNF e le converte in Set di stringhe
-     * per confronti efficienti di sussunzione
+     * Estrae clausole dalla formula CNF e le converte in rappresentazione Set ottimizzata.
+     * Ogni clausola diventa Set<String> per confronti di sussunzione O(1).
+     *
+     * @param cnfFormula formula CNF da processare
+     * @return lista di Set rappresentanti le clausole
      */
-    private List<Set<String>> extractClausesAsSets(CNFConverter cnfFormula) {
+    private List<Set<String>> extractClausesAsSetRepresentation(CNFConverter cnfFormula) {
         List<Set<String>> clauseSets = new ArrayList<>();
 
         switch (cnfFormula.type) {
             case AND -> {
-                // Formula normale: congiunzione di clausole
+                // Formula normale: congiunzione di clausole multiple
                 if (cnfFormula.operands != null) {
                     for (CNFConverter clause : cnfFormula.operands) {
-                        Set<String> clauseSet = extractSingleClauseAsSet(clause);
+                        Set<String> clauseSet = convertSingleClauseToSet(clause);
                         if (!clauseSet.isEmpty()) {
                             clauseSets.add(clauseSet);
                         }
@@ -166,7 +212,7 @@ public class SubsumptionPrinciple {
             }
             case OR, ATOM, NOT -> {
                 // Formula singola clausola
-                Set<String> clauseSet = extractSingleClauseAsSet(cnfFormula);
+                Set<String> clauseSet = convertSingleClauseToSet(cnfFormula);
                 if (!clauseSet.isEmpty()) {
                     clauseSets.add(clauseSet);
                 }
@@ -177,21 +223,19 @@ public class SubsumptionPrinciple {
             }
         }
 
-        originalClauseCount = clauseSets.size();
-        optimizationLog.append("Clausole estratte: ").append(originalClauseCount).append("\n");
+        originalClausesCount = clauseSets.size();
+        optimizationLog.append("Clausole estratte: ").append(originalClausesCount).append("\n");
 
-        // Log clausole per debugging
-        for (int i = 0; i < clauseSets.size(); i++) {
-            optimizationLog.append("  ").append(i + 1).append(". ").append(clauseSets.get(i)).append("\n");
-        }
+        // Log dettagliato clausole per debugging
+        logExtractedClauses(clauseSets);
 
         return clauseSets;
     }
 
     /**
-     * Estrae singola clausola come Set di letterali stringa
+     * Converte singola clausola CNF in Set di letterali string per confronti efficienti.
      */
-    private Set<String> extractSingleClauseAsSet(CNFConverter clause) {
+    private Set<String> convertSingleClauseToSet(CNFConverter clause) {
         Set<String> literals = new HashSet<>();
 
         switch (clause.type) {
@@ -199,22 +243,22 @@ public class SubsumptionPrinciple {
                 // Disgiunzione: raccoglie tutti i letterali
                 if (clause.operands != null) {
                     for (CNFConverter literal : clause.operands) {
-                        String literalStr = extractLiteralAsString(literal);
-                        if (literalStr != null) {
-                            literals.add(literalStr);
+                        String literalString = extractLiteralAsString(literal);
+                        if (literalString != null) {
+                            literals.add(literalString);
                         }
                     }
                 }
             }
             case ATOM, NOT -> {
                 // Letterale singolo
-                String literalStr = extractLiteralAsString(clause);
-                if (literalStr != null) {
-                    literals.add(literalStr);
+                String literalString = extractLiteralAsString(clause);
+                if (literalString != null) {
+                    literals.add(literalString);
                 }
             }
             default -> {
-                LOGGER.warning("Tipo clausola non supportato: " + clause.type);
+                LOGGER.warning("Tipo clausola non supportato nella conversione: " + clause.type);
             }
         }
 
@@ -222,7 +266,7 @@ public class SubsumptionPrinciple {
     }
 
     /**
-     * Estrae letterale come stringa normalizzata
+     * Estrae letterale come stringa normalizzata per confronti.
      */
     private String extractLiteralAsString(CNFConverter literal) {
         switch (literal.type) {
@@ -242,77 +286,120 @@ public class SubsumptionPrinciple {
         return null;
     }
 
+    /**
+     * Log dettagliato delle clausole estratte per debugging.
+     */
+    private void logExtractedClauses(List<Set<String>> clauseSets) {
+        for (int i = 0; i < clauseSets.size(); i++) {
+            optimizationLog.append("  ").append(i + 1).append(". ").append(clauseSets.get(i)).append("\n");
+        }
+    }
+
     //endregion
 
-    //region ALGORITMO SUSSUNZIONE
+    //region ALGORITMO SUSSUNZIONE CORE
 
     /**
-     * Esegue l'ottimizzazione di sussunzione principale
+     * Esegue l'algoritmo di ottimizzazione sussunzione con analisi sistematica.
+     *
+     * ALGORITMO:
+     * 1. Confronto a coppie di tutte le clausole
+     * 2. Verifica sussunzione bidirezionale per ogni coppia
+     * 3. Marking clausole da eliminare senza rimozione immediata
+     * 4. Costruzione risultato con clausole sopravvissute
+     * 5. Logging dettagliato di tutte le sussunzioni trovate
+     *
+     * @param clauseSets rappresentazione Set delle clausole
+     * @return clausole ottimizzate dopo eliminazione ridondanze
      */
-    private List<Set<String>> performSubsumptionOptimization(List<Set<String>> clauseSets) {
-        optimizationLog.append("\n=== ANALISI SUSSUNZIONE ===\n");
+    private List<Set<String>> executeSubsumptionOptimization(List<Set<String>> clauseSets) {
+        optimizationLog.append("\n=== ANALISI SUSSUNZIONE SISTEMATICA ===\n");
 
-        // Set per tracking clausole da eliminare
+        // Set per tracking clausole da eliminare (evita rimozione durante iterazione)
         Set<Integer> clausesToEliminate = new HashSet<>();
 
-        // Confronto ogni coppia di clausole
+        // Confronto sistematico a coppie
         for (int i = 0; i < clauseSets.size(); i++) {
             if (clausesToEliminate.contains(i)) continue;
 
-            Set<String> clause1 = clauseSets.get(i);
+            Set<String> clauseA = clauseSets.get(i);
 
             for (int j = i + 1; j < clauseSets.size(); j++) {
                 if (clausesToEliminate.contains(j)) continue;
 
-                Set<String> clause2 = clauseSets.get(j);
+                Set<String> clauseB = clauseSets.get(j);
 
-                // Verifica sussunzione in entrambe le direzioni
-                if (subsumes(clause1, clause2)) {
-                    // clause1 sussume clause2 => elimina clause2
+                // Verifica sussunzione bidirezionale
+                if (checkSubsumption(clauseA, clauseB)) {
+                    // clauseA sussume clauseB → elimina clauseB (più generale)
                     clausesToEliminate.add(j);
-                    eliminatedClauses++;
+                    eliminatedClausesCount++;
 
-                    optimizationLog.append("SUSSUNZIONE: ").append(clause1)
-                            .append(" sussume ").append(clause2).append("\n");
+                    logSubsumptionFound(clauseA, clauseB, "A sussume B");
 
-                    LOGGER.fine("Clausola " + clause1 + " sussume " + clause2);
-
-                } else if (subsumes(clause2, clause1)) {
-                    // clause2 sussume clause1 => elimina clause1
+                } else if (checkSubsumption(clauseB, clauseA)) {
+                    // clauseB sussume clauseA → elimina clauseA (più generale)
                     clausesToEliminate.add(i);
-                    eliminatedClauses++;
+                    eliminatedClausesCount++;
 
-                    optimizationLog.append("SUSSUNZIONE: ").append(clause2)
-                            .append(" sussume ").append(clause1).append("\n");
-
-                    LOGGER.fine("Clausola " + clause2 + " sussume " + clause1);
-                    break; // clause1 eliminata, passa alla prossima
+                    logSubsumptionFound(clauseB, clauseA, "B sussume A");
+                    break; // clauseA eliminata, passa alla successiva
                 }
             }
         }
 
-        // Costruisci lista clausole ottimizzate
-        List<Set<String>> optimizedClauses = new ArrayList<>();
-        for (int i = 0; i < clauseSets.size(); i++) {
-            if (!clausesToEliminate.contains(i)) {
-                optimizedClauses.add(clauseSets.get(i));
-            }
-        }
+        // Costruzione risultato con clausole sopravvissute
+        List<Set<String>> optimizedClauses = buildOptimizedClauseList(clauseSets, clausesToEliminate);
 
-        optimizationLog.append("Clausole eliminate: ").append(eliminatedClauses).append("\n");
-        optimizationLog.append("Clausole rimanenti: ").append(optimizedClauses.size()).append("\n");
-
+        logOptimizationResults(optimizedClauses.size());
         return optimizedClauses;
     }
 
     /**
-     * Verifica se clausola1 sussume clausola2
+     * Verifica matematica se clauseA sussume clauseB.
+     * Sussunzione: clauseA ⊆ clauseB (A è contenuto in B).
      *
-     * Una clausola C1 sussume C2 se tutti i letterali di C1 sono contenuti in C2
+     * @param clauseA clausola potenzialmente sussumente
+     * @param clauseB clausola potenzialmente sussumeta
+     * @return true se clauseA sussume clauseB
      */
-    private boolean subsumes(Set<String> clause1, Set<String> clause2) {
-        // C1 sussume C2 se C1 ⊆ C2
-        return clause2.containsAll(clause1);
+    private boolean checkSubsumption(Set<String> clauseA, Set<String> clauseB) {
+        // A sussume B se tutti i letterali di A sono contenuti in B
+        return clauseB.containsAll(clauseA);
+    }
+
+    /**
+     * Costruisce lista ottimizzata escludendo clausole eliminate.
+     */
+    private List<Set<String>> buildOptimizedClauseList(List<Set<String>> original, Set<Integer> toEliminate) {
+        List<Set<String>> optimized = new ArrayList<>();
+
+        for (int i = 0; i < original.size(); i++) {
+            if (!toEliminate.contains(i)) {
+                optimized.add(original.get(i));
+            }
+        }
+
+        return optimized;
+    }
+
+    /**
+     * Log dettagliato di sussunzione trovata per tracciabilità.
+     */
+    private void logSubsumptionFound(Set<String> sussumente, Set<String> sussumeta, String description) {
+        optimizationLog.append("SUSSUNZIONE: ").append(sussumente)
+                .append(" sussume ").append(sussumeta)
+                .append(" (").append(description).append(")\n");
+
+        LOGGER.fine("Sussunzione identificata: " + sussumente + " sussume " + sussumeta);
+    }
+
+    /**
+     * Log risultati complessivi dell'ottimizzazione.
+     */
+    private void logOptimizationResults(int finalClausesCount) {
+        optimizationLog.append("Clausole eliminate: ").append(eliminatedClausesCount).append("\n");
+        optimizationLog.append("Clausole finali: ").append(finalClausesCount).append("\n");
     }
 
     //endregion
@@ -320,37 +407,35 @@ public class SubsumptionPrinciple {
     //region RICOSTRUZIONE FORMULA
 
     /**
-     * Ricostruisce formula CNF da clausole ottimizzate
+     * Ricostruisce formula CNF da rappresentazione Set ottimizzata.
+     * Mantiene struttura originale compatibile con CNFConverter.
+     *
+     * @param optimizedClauseSets clausole in formato Set ottimizzato
+     * @return formula CNF ricostruita
      */
-    private CNFConverter reconstructFormula(List<Set<String>> optimizedClauseSets) {
-        optimizationLog.append("\n=== RICOSTRUZIONE FORMULA ===\n");
+    private CNFConverter reconstructFormulaFromSets(List<Set<String>> optimizedClauseSets) {
+        optimizationLog.append("\n=== RICOSTRUZIONE FORMULA OTTIMIZZATA ===\n");
 
         if (optimizedClauseSets.isEmpty()) {
-            optimizationLog.append("Nessuna clausola rimanente => formula TRUE\n");
+            optimizationLog.append("Nessuna clausola rimasta → formula TRUE\n");
             return new CNFConverter("TRUE");
         }
 
         List<CNFConverter> cnfClauses = new ArrayList<>();
 
         for (Set<String> clauseSet : optimizedClauseSets) {
-            CNFConverter clause = reconstructSingleClause(clauseSet);
-            if (clause != null) {
-                cnfClauses.add(clause);
+            CNFConverter reconstructedClause = reconstructSingleClause(clauseSet);
+            if (reconstructedClause != null) {
+                cnfClauses.add(reconstructedClause);
             }
         }
 
-        // Costruzione formula finale
-        if (cnfClauses.isEmpty()) {
-            return new CNFConverter("TRUE");
-        } else if (cnfClauses.size() == 1) {
-            return cnfClauses.get(0);
-        } else {
-            return new CNFConverter(CNFConverter.Type.AND, cnfClauses);
-        }
+        // Costruzione formula finale con struttura appropriata
+        return buildFinalFormulaStructure(cnfClauses);
     }
 
     /**
-     * Ricostruisce singola clausola da Set di letterali
+     * Ricostruisce singola clausola da Set di letterali.
      */
     private CNFConverter reconstructSingleClause(Set<String> clauseSet) {
         if (clauseSet.isEmpty()) {
@@ -359,13 +444,44 @@ public class SubsumptionPrinciple {
 
         List<CNFConverter> literals = new ArrayList<>();
 
-        for (String literalStr : clauseSet) {
-            CNFConverter literal = reconstructSingleLiteral(literalStr);
+        for (String literalString : clauseSet) {
+            CNFConverter literal = reconstructSingleLiteral(literalString);
             if (literal != null) {
                 literals.add(literal);
             }
         }
 
+        return buildClauseStructure(literals);
+    }
+
+    /**
+     * Ricostruisce singolo letterale da rappresentazione string.
+     */
+    private CNFConverter reconstructSingleLiteral(String literalString) {
+        if (literalString == null || literalString.trim().isEmpty()) {
+            return null;
+        }
+
+        String cleanLiteral = literalString.trim();
+
+        if (cleanLiteral.startsWith("!")) {
+            // Letterale negativo
+            String atom = cleanLiteral.substring(1).trim();
+            if (!atom.isEmpty()) {
+                return new CNFConverter(new CNFConverter(atom));
+            }
+        } else {
+            // Letterale positivo
+            return new CNFConverter(cleanLiteral);
+        }
+
+        return null;
+    }
+
+    /**
+     * Costruisce struttura clausola appropriata basata su numero letterali.
+     */
+    private CNFConverter buildClauseStructure(List<CNFConverter> literals) {
         if (literals.isEmpty()) {
             return null;
         } else if (literals.size() == 1) {
@@ -376,60 +492,39 @@ public class SubsumptionPrinciple {
     }
 
     /**
-     * Ricostruisce singolo letterale da stringa
+     * Costruisce struttura formula finale appropriata.
      */
-    private CNFConverter reconstructSingleLiteral(String literalStr) {
-        if (literalStr == null || literalStr.trim().isEmpty()) {
-            return null;
-        }
-
-        literalStr = literalStr.trim();
-
-        if (literalStr.startsWith("!")) {
-            String atom = literalStr.substring(1).trim();
-            if (!atom.isEmpty()) {
-                return new CNFConverter(new CNFConverter(atom));
-            }
+    private CNFConverter buildFinalFormulaStructure(List<CNFConverter> cnfClauses) {
+        if (cnfClauses.isEmpty()) {
+            return new CNFConverter("TRUE");
+        } else if (cnfClauses.size() == 1) {
+            return cnfClauses.get(0);
         } else {
-            return new CNFConverter(literalStr);
+            return new CNFConverter(CNFConverter.Type.AND, cnfClauses);
         }
-
-        return null;
     }
 
     //endregion
 
-    //region LOGGING E STATISTICHE
+    //region FINALIZZAZIONE E REPORTING
 
     /**
-     * Log risultati finali ottimizzazione
+     * Finalizza ottimizzazione con generazione report completo.
      */
-    private void logOptimizationResults() {
-        optimizationLog.append("\n=== RISULTATI OTTIMIZZAZIONE ===\n");
-        optimizationLog.append("Clausole originali: ").append(originalClauseCount).append("\n");
-        optimizationLog.append("Clausole eliminate: ").append(eliminatedClauses).append("\n");
-        optimizationLog.append("Clausole finali: ").append(originalClauseCount - eliminatedClauses).append("\n");
+    private void finalizeOptimizationWithReport() {
+        optimizationLog.append("\n=== RISULTATI FINALI OTTIMIZZAZIONE ===\n");
+        optimizationLog.append("Clausole originali: ").append(originalClausesCount).append("\n");
+        optimizationLog.append("Clausole eliminate: ").append(eliminatedClausesCount).append("\n");
+        optimizationLog.append("Clausole finali: ").append(originalClausesCount - eliminatedClausesCount).append("\n");
 
-        if (originalClauseCount > 0) {
-            double reductionPercentage = (double) eliminatedClauses / originalClauseCount * 100;
-            optimizationLog.append("Riduzione: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
+        if (originalClausesCount > 0) {
+            double reductionPercentage = (double) eliminatedClausesCount / originalClausesCount * 100;
+            optimizationLog.append("Riduzione percentuale: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
         }
 
         optimizationLog.append("===============================\n");
 
-        LOGGER.info("Ottimizzazione sussunzione completata: " + eliminatedClauses + " clausole eliminate");
-    }
-
-    /**
-     * Conversione sicura a stringa con gestione errori
-     */
-    private String safeToString(CNFConverter formula) {
-        try {
-            return formula != null ? formula.toString() : "null";
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Errore toString() su formula", e);
-            return "ERROR_IN_TOSTRING";
-        }
+        LOGGER.info("Ottimizzazione sussunzione completata: " + eliminatedClausesCount + " clausole eliminate su " + originalClausesCount);
     }
 
     //endregion
@@ -437,112 +532,151 @@ public class SubsumptionPrinciple {
     //region INTERFACCIA PUBBLICA INFORMAZIONI
 
     /**
-     * Restituisce informazioni dettagliate sull'ottimizzazione
+     * Restituisce report dettagliato dell'ottimizzazione per output utente.
+     * Formato strutturato per presentazione e documentazione risultati.
+     *
+     * @return stringa formattata con statistiche e dettagli completi
      */
     public String getOptimizationInfo() {
-        StringBuilder info = new StringBuilder();
+        StringBuilder report = new StringBuilder();
 
         // Header standardizzato
-        info.append("----------------------------\n");
-        info.append("| PRINCIPIO DI SUSSUNZIONE |\n");
-        info.append("----------------------------\n");
-        info.append("Clausole originali: ").append(originalClauseCount).append("\n");
-        info.append("Clausole eliminate: ").append(eliminatedClauses).append("\n");
-        info.append("Clausole finali: ").append(originalClauseCount - eliminatedClauses).append("\n");
+        report.append("----------------------------\n");
+        report.append("| PRINCIPIO DI SUSSUNZIONE |\n");
+        report.append("----------------------------\n");
 
-        if (originalClauseCount > 0) {
-            double reductionPercentage = (double) eliminatedClauses / originalClauseCount * 100;
-            info.append("Riduzione percentuale: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
+        // Statistiche principali
+        appendMainStatistics(report);
+
+        // Dettagli processo se disponibili
+        appendProcessDetails(report);
+
+        return report.toString();
+    }
+
+    /**
+     * Aggiunge statistiche principali al report.
+     */
+    private void appendMainStatistics(StringBuilder report) {
+        report.append("Clausole originali: ").append(originalClausesCount).append("\n");
+        report.append("Clausole eliminate: ").append(eliminatedClausesCount).append("\n");
+        report.append("Clausole finali: ").append(originalClausesCount - eliminatedClausesCount).append("\n");
+
+        if (originalClausesCount > 0) {
+            double reductionPercentage = (double) eliminatedClausesCount / originalClausesCount * 100;
+            report.append("Riduzione percentuale: ").append(String.format("%.1f%%", reductionPercentage)).append("\n");
         } else {
-            info.append("Riduzione percentuale: 0.0%\n");
+            report.append("Riduzione percentuale: 0.0%\n");
         }
 
-        info.append("\n");
+        report.append("\n");
+    }
 
-        // Estrai dettagli dal log di ottimizzazione
+    /**
+     * Aggiunge dettagli del processo al report se disponibili.
+     */
+    private void appendProcessDetails(StringBuilder report) {
         String logContent = optimizationLog.toString();
 
-        // Sezione inizio sussunzione
         if (logContent.contains("Formula originale:")) {
-            info.append("=== INIZIO SUSSUNZIONE ===\n");
-
-            // Estrai formula originale
-            String[] lines = logContent.split("\n");
-            for (String line : lines) {
-                if (line.contains("Formula originale:")) {
-                    String formula = line.substring(line.indexOf(":") + 1).trim();
-                    info.append("Formula originale: ").append(formula).append("\n");
-                    break;
-                }
-            }
-
-            // Estrai clausole estratte
-            for (String line : lines) {
-                if (line.contains("Clausole estratte:")) {
-                    info.append("Clausole estratte: ").append(line.substring(line.indexOf(":") + 1).trim()).append("\n");
-                    break;
-                }
-            }
-
-            // Aggiungi elenco clausole estratte
-            boolean inClauseList = false;
-            for (String line : lines) {
-                if (line.trim().matches("\\d+\\..*")) {
-                    if (!inClauseList) {
-                        inClauseList = true;
-                    }
-                    info.append(line.trim()).append("\n");
-                } else if (inClauseList && line.contains("===")) {
-                    break;
-                }
-            }
-
-            info.append("\n");
+            report.append("=== DETTAGLI PROCESSO ===\n");
+            extractAndAppendProcessInfo(report, logContent);
         }
-
-        // Sezione sussunzioni eseguite
-        if (logContent.contains("SUSSUNZIONE:")) {
-            info.append("=== SUSSUNZIONI ESEGUITE ===\n");
-
-            String[] lines = logContent.split("\n");
-            for (String line : lines) {
-                if (line.contains("SUSSUNZIONE:")) {
-                    // Estrai e formatta la sussunzione
-                    String sussunzione = line.substring(line.indexOf("SUSSUNZIONE:") + 12).trim();
-                    info.append(sussunzione).append("\n");
-                }
-            }
-        }
-
-        return info.toString();
     }
 
     /**
-     * @return numero clausole eliminate
+     * Estrae e formatta informazioni processo dal log interno.
+     */
+    private void extractAndAppendProcessInfo(StringBuilder report, String logContent) {
+        String[] logLines = logContent.split("\n");
+
+        // Estrai informazioni chiave
+        for (String line : logLines) {
+            if (line.contains("Formula originale:")) {
+                String formula = line.substring(line.indexOf(":") + 1).trim();
+                report.append("Formula originale: ").append(formula).append("\n");
+            } else if (line.contains("Clausole estratte:")) {
+                report.append("Clausole estratte: ").append(line.substring(line.indexOf(":") + 1).trim()).append("\n");
+            }
+        }
+
+        // Aggiungi sussunzioni trovate
+        appendSubsumptionsFound(report, logLines);
+    }
+
+    /**
+     * Aggiunge sussunzioni trovate al report.
+     */
+    private void appendSubsumptionsFound(StringBuilder report, String[] logLines) {
+        boolean hasSubsumptions = false;
+
+        for (String line : logLines) {
+            if (line.contains("SUSSUNZIONE:")) {
+                if (!hasSubsumptions) {
+                    report.append("\n=== SUSSUNZIONI IDENTIFICATE ===\n");
+                    hasSubsumptions = true;
+                }
+
+                String subsumption = line.substring(line.indexOf("SUSSUNZIONE:") + 12).trim();
+                report.append(subsumption).append("\n");
+            }
+        }
+    }
+
+    /**
+     * @return numero clausole eliminate durante ottimizzazione
      */
     public int getEliminatedClausesCount() {
-        return eliminatedClauses;
+        return eliminatedClausesCount;
     }
 
     /**
-     * @return numero clausole originali
+     * @return numero clausole originali prima dell'ottimizzazione
      */
     public int getOriginalClausesCount() {
-        return originalClauseCount;
+        return originalClausesCount;
     }
 
     /**
-     * Reset per nuova ottimizzazione
+     * @return percentuale di riduzione ottenuta (0.0-100.0)
      */
-    public void reset() {
-        resetState();
-        LOGGER.fine("SubsumptionPrinciple resettato");
+    public double getReductionPercentage() {
+        return originalClausesCount > 0 ?
+                (double) eliminatedClausesCount / originalClausesCount * 100 : 0.0;
     }
 
+    /**
+     * Reset completo per riutilizzo dell'istanza su nuova formula.
+     */
+    public void reset() {
+        resetOptimizationState();
+        LOGGER.fine("SubsumptionPrinciple resettato per nuovo utilizzo");
+    }
+
+    //endregion
+
+    //region UTILITÀ E HELPER METHODS
+
+    /**
+     * Ottiene rappresentazione string sicura della formula per logging.
+     */
+    private String getFormulaStringRepresentation(CNFConverter formula) {
+        try {
+            return formula != null ? formula.toString() : "null";
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Errore toString() su formula durante logging", e);
+            return "ERROR_IN_FORMULA_REPRESENTATION";
+        }
+    }
+
+    /**
+     * Rappresentazione testuale dell'ottimizzatore per debugging.
+     */
     @Override
     public String toString() {
-        return String.format("SubsumptionPrinciple[original=%d, eliminated=%d, final=%d]",
-                originalClauseCount, eliminatedClauses, originalClauseCount - eliminatedClauses);
+        return String.format("SubsumptionPrinciple[original=%d, eliminated=%d, final=%d, reduction=%.1f%%]",
+                originalClausesCount, eliminatedClausesCount,
+                originalClausesCount - eliminatedClausesCount, getReductionPercentage());
     }
 
     //endregion

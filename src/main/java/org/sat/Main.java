@@ -26,13 +26,13 @@ import java.util.logging.Level;
 import java.util.stream.Stream;
 
 /**
- * SOLUTORE SAT CDCL - Punto di ingresso principale
+ * SOLUTORE SAT CDCL
  *
  * Questo solutore implementa l'algoritmo CDCL (Conflict-Driven Clause Learning) per risolvere
  * problemi di soddisfacibilità booleana (SAT).
  *
  * ALGORITMI IMPLEMENTATI:
- * - CDCL con euristica VSIDS per selezione variabili
+ * - CDCL con euristica VSIDS per la selezione di variabili
  * - First 1UIP per apprendimento clausole e backjumping
  * - Generazione automatica di prove per formule UNSAT
  * - Unit propagation con rilevamento conflitti
@@ -40,17 +40,16 @@ import java.util.stream.Stream;
  * - Principio di sussunzione per eliminazione clausole ridondanti
  *
  * @author Amos Lo Verde
- * @version 1.7.1
+ * @version 1.7.2
+ *
  */
 public final class Main {
 
-    //region CONFIGURAZIONE E COSTANTI
-
     private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
 
-    /**
-     * Parametri linea di comando
-     */
+    //region CONFIGURAZIONE E COSTANTI
+
+    // Parametri linea di comando
     private static final String HELP_PARAM = "-h";
     private static final String FILE_PARAM = "-f";
     private static final String DIR_PARAM = "-d";
@@ -58,40 +57,34 @@ public final class Main {
     private static final String TIMEOUT_PARAM = "-t";
     private static final String OPT_PARAM = "-opt=";
 
-    /**
-     * Opzioni di ottimizzazione
-     */
+    // Opzioni di ottimizzazione
     private static final String OPT_SUBSUMPTION = "s";
     private static final String OPT_WATCHED_LITERALS = "w";
     private static final String OPT_RESTART = "r";
     private static final String OPT_TSEITIN = "t";
     private static final String OPT_ALL = "all";
 
-    /**
-     * Configurazioni timeout
-     */
+    // Configurazioni timeout
     private static final int DEFAULT_TIMEOUT_SECONDS = 10;
     private static final int MIN_TIMEOUT_SECONDS = 5;
 
-    /**
-     * Costruttore privato - classe utility non istanziabile
-     */
+    /** Costruttore privato - classe utility non istanziabile */
     private Main() {
         throw new UnsupportedOperationException("Classe utility - non istanziabile");
     }
 
     //endregion
 
-
-    //region PUNTO DI INGRESSO PRINCIPALE
+    //region PUNTO DI INGRESSO E COORDINAMENTO PRINCIPALE
 
     /**
-     * Entry point dell'applicazione. Coordina l'intero flusso di elaborazione.
+     * Entry point dell'applicazione. Coordina il flusso completo di elaborazione SAT.
      *
-     * FLUSSO:
-     * 1. Parsing e validazione parametri linea di comando
-     * 2. Selezione modalità operativa (file singolo vs directory)
-     * 3. Esecuzione elaborazione con gestione errori
+     * FLUSSO PRINCIPALE:
+     * 1. Parsing e validazione parametri comando
+     * 2. Configurazione ambiente di esecuzione
+     * 3. Dispatch alla modalità appropriata (file/directory)
+     * 4. Gestione errori e cleanup finale
      *
      * @param args parametri linea di comando
      */
@@ -99,41 +92,61 @@ public final class Main {
         LOGGER.info("=== AVVIO SOLUTORE SAT CDCL ===");
 
         try {
-            // Validazione input base
+            // Validazione e parsing parametri
             if (args.length == 0) {
                 System.out.println("Nessun parametro fornito. Usa -h per visualizzare l'help.");
                 return;
             }
 
-            // Parsing parametri con validazione
-            Configuration config = parseAndValidateArguments(args);
+            Configuration config = parseCommandLineArguments(args);
             if (config == null) return; // Help mostrato o errore
 
-            // Mostra configurazione per conferma utente
+            // Esecuzione modalità selezionata
             displayConfiguration(config);
-
-            // Esecuzione modalità appropriata
-            executeSelectedMode(config);
+            dispatchToExecutionMode(config);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Errore critico nell'applicazione", e);
-            System.err.println("ERRORE CRITICO: " + e.getMessage());
-            System.exit(1);
+            handleCriticalError(e);
         } finally {
             LOGGER.info("=== FINE ESECUZIONE SOLUTORE SAT ===");
         }
     }
 
-    //endregion
+    /**
+     * Coordina il dispatch verso la modalità di esecuzione appropriata.
+     * Seleziona tra elaborazione file singolo o batch directory.
+     */
+    private static void dispatchToExecutionMode(Configuration config) {
+        if (config.isFileMode) {
+            LOGGER.info("Modalità file singolo: " + config.inputPath);
+            processSingleFile(config);
+        } else {
+            LOGGER.info("Modalità directory batch: " + config.inputPath);
+            processDirectoryBatch(config);
+        }
+    }
 
+    /**
+     * Gestisce errori critici dell'applicazione con logging appropriato.
+     */
+    private static void handleCriticalError(Exception e) {
+        LOGGER.log(Level.SEVERE, "Errore critico nell'applicazione", e);
+        System.err.println("ERRORE CRITICO: " + e.getMessage());
+        System.exit(1);
+    }
+
+    //endregion
 
     //region PARSING E VALIDAZIONE PARAMETRI
 
     /**
-     * Analizza e valida tutti i parametri della linea di comando.
-     * Gestisce help, validazione input e creazione configurazione.
+     * Analizza e valida i parametri della linea di comando.
+     * Costruisce configurazione completa con tutte le opzioni validate.
+     *
+     * @param args array parametri linea comando
+     * @return configurazione validata o null se help/errore
      */
-    private static Configuration parseAndValidateArguments(String[] args) {
+    private static Configuration parseCommandLineArguments(String[] args) {
         try {
             CommandLineParser parser = new CommandLineParser();
             return parser.parse(args);
@@ -145,173 +158,159 @@ public final class Main {
     }
 
     /**
-     * Mostra la configurazione corrente per conferma utente
+     * Mostra la configurazione corrente per verifica utente prima dell'esecuzione.
      */
     private static void displayConfiguration(Configuration config) {
         System.out.println("\n=== CONFIGURAZIONE SOLUTORE SAT ===");
+        System.out.println("Modalità: " + (config.isFileMode ? "File singolo" : "Directory batch"));
+        System.out.println("Input: " + config.inputPath);
+        System.out.println("Output: " + (config.outputPath != null ? config.outputPath : "Default (stessa cartella input)"));
         System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
 
-        // Mostra ottimizzazioni attive
-        List<String> activeOptimizations = new ArrayList<>();
-        if (config.useSubsumption) activeOptimizations.add("Sussunzione");
-        if (config.useWatchedLiterals) activeOptimizations.add("Watched Literals");
-        if (config.useRestart) activeOptimizations.add("Restart");
-        if (config.useTseitin) activeOptimizations.add("Tseitin");
-
-        if (activeOptimizations.isEmpty()) {
-            System.out.println("Ottimizzazioni: Nessuna");
-        } else {
-            System.out.println("Ottimizzazioni: " + String.join(", ", activeOptimizations));
-        }
-
-        if (config.isFileMode) {
-            System.out.println("Modalità: File singolo");
-            System.out.println("File input: " + config.inputPath);
-        } else {
-            System.out.println("Modalità: Directory");
-            System.out.println("Directory input: " + config.inputPath);
-        }
-
-        String outputInfo = config.outputPath != null ? config.outputPath : "Default (stessa cartella input)";
-        System.out.println("Directory output: " + outputInfo);
+        // Visualizza ottimizzazioni attive
+        List<String> activeOpts = buildActiveOptimizationsList(config);
+        System.out.println("Ottimizzazioni: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
         System.out.println("====================================\n");
     }
 
     /**
-     * Esegue la modalità operativa selezionata (file singolo o directory)
+     * Costruisce lista ottimizzazioni attive per visualizzazione.
      */
-    private static void executeSelectedMode(Configuration config) {
-        if (config.isFileMode) {
-            LOGGER.info("Esecuzione modalità file singolo: " + config.inputPath);
-            processFile(config.inputPath, config.outputPath, config.timeoutSeconds, config);
-        } else {
-            LOGGER.info("Esecuzione modalità directory: " + config.inputPath);
-            processDirectory(config.inputPath, config.outputPath, config.timeoutSeconds, config);
-        }
-    }
-
-    //endregion
-
-
-    //region ELABORAZIONE FILE SINGOLO
-
-    /**
-     * Elabora un singolo file contenente una formula logica.
-     *
-     * PIPELINE COMPLETA:
-     * 1. Lettura formula da file
-     * 2. Parsing con ANTLR (grammatica logica proposizionale)
-     * 3. Conversione automatica in CNF
-     * 4. [OPZIONALE] Conversione Tseitin in E-CNF se richiesta
-     * 5. [OPZIONALE] Applicazione principio di sussunzione se richiesto
-     * 6. Risoluzione SAT con CDCL e timeout
-     * 7. Salvataggio risultati e statistiche
-     *
-     * @param filePath percorso file da elaborare
-     * @param outputPath directory output (null = default)
-     * @param timeoutSeconds timeout per risoluzione SAT
-     * @param config configurazione ottimizzazioni
-     * @return risultato elaborazione
-     */
-    private static ProcessResult processFile(String filePath, String outputPath, int timeoutSeconds, Configuration config) {
-        System.out.println("\n=== ELABORAZIONE FILE ===");
-        System.out.println("File: " + Paths.get(filePath).getFileName());
-
-        // Mostra ottimizzazioni attive
+    private static List<String> buildActiveOptimizationsList(Configuration config) {
         List<String> activeOpts = new ArrayList<>();
         if (config.useTseitin) activeOpts.add("Tseitin");
         if (config.useSubsumption) activeOpts.add("Sussunzione");
         if (config.useWatchedLiterals) activeOpts.add("Watched Literals");
         if (config.useRestart) activeOpts.add("Restart");
+        return activeOpts;
+    }
 
+    //endregion
+
+    //region ELABORAZIONE FILE SINGOLO
+
+    /**
+     * Elabora un singolo file contenente una formula logica attraverso la pipeline completa SAT.
+     *
+     * PIPELINE ELABORAZIONE:
+     * 1. Lettura e parsing formula logica
+     * 2. Conversione in CNF standard
+     * 3. Applicazione ottimizzazioni opzionali (Tseitin, Sussunzione)
+     * 4. Risoluzione SAT con algoritmo CDCL
+     * 5. Generazione output strutturato (risultati, prove, statistiche)
+     *
+     * @param config configurazione completa elaborazione
+     */
+    private static void processSingleFile(Configuration config) {
+        System.out.println("\n=== ELABORAZIONE FILE ===");
+        System.out.println("File: " + Paths.get(config.inputPath).getFileName());
+
+        List<String> activeOpts = buildActiveOptimizationsList(config);
         System.out.println("Ottimizzazioni: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
         System.out.println("========================\n");
 
         try {
-            // STEP 1: Lettura formula logica
-            String formulaText = readFormulaFromFile(filePath);
+            // Pipeline di conversione formula
+            FormulaProcessingResult formulaResult = processFormulaConversionPipeline(config);
 
-            // STEP 2: Conversione in CNF
-            CNFConversionResult cnfResult = convertToCNF(formulaText);
+            // Risoluzione SAT con timeout
+            SATResult satResult = executeSATSolving(formulaResult.finalFormula, config.timeoutSeconds);
 
-            // STEP 3: Salvataggio CNF standard (sempre eseguito)
-            saveCNFToFile(cnfResult.cnfString, filePath, outputPath);
-
-            // STEP 4: Conversione Tseitin (se richiesta)
-            CNFConverter formulaToOptimize;
-            String conversionInfo = "";
-            boolean isECNF = false;
-
-            if (config.useTseitin) {
-                TseitinConversionResult tseitinResult = convertToECNF(cnfResult);
-                formulaToOptimize = tseitinResult.ecnfFormula;
-                conversionInfo = tseitinResult.conversionInfo;
-                isECNF = true;
-
-                // Salvataggio E-CNF - SOLO FORMULA
-                saveECNFToFile(tseitinResult.ecnfString, filePath, outputPath);
-
-                // Salvataggio statistiche Tseitin - FILE SEPARATO
-                saveTseitinStatsToFile(conversionInfo, filePath, outputPath);
-            } else {
-                formulaToOptimize = cnfResult.cnfFormula;
-            }
-
-            // STEP 5: Applicazione principio di sussunzione (se richiesto)
-            CNFConverter formulaToSolve = formulaToOptimize;
-            String subsumptionInfo = "";
-
-            if (config.useSubsumption) {
-                SubsumptionOptimizationResult subsumptionResult = applySubsumptionOptimization(formulaToOptimize, isECNF);
-                formulaToSolve = subsumptionResult.optimizedFormula;
-                subsumptionInfo = subsumptionResult.optimizationInfo;
-
-                // Salvataggio statistiche sussunzione
-                saveSubsumptionStatsToFile(subsumptionInfo, filePath, outputPath, isECNF);
-            }
-
-            // STEP 6: Risoluzione SAT con timeout
-            SATResult satResult = solveSATWithTimeout(formulaToSolve, timeoutSeconds);
-
+            // Gestione risultato finale
             if (satResult == null) {
-                // Salva file opzioni attive anche per timeout
-                saveActiveOptionsFile(config, filePath, outputPath);
-                return handleTimeoutCase(filePath, outputPath, timeoutSeconds, config);
+                handleTimeoutResult(config);
+            } else {
+                handleSuccessfulResult(satResult, formulaResult, config);
             }
-
-            // STEP 7: Salvataggio risultati
-            saveResultsToFile(satResult, formulaToSolve, filePath, outputPath, conversionInfo, config);
-
-            // STEP 8: Salvataggio file opzioni attive (se necessario)
-            saveActiveOptionsFile(config, filePath, outputPath);
-
-            // STEP 9: Visualizzazione statistiche
-            displayFinalStatistics(satResult, formulaToSolve);
-
-            return ProcessResult.success();
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Errore elaborazione file: " + filePath, e);
-            System.out.println("Errore durante l'elaborazione: " + e.getMessage());
-            return ProcessResult.error();
+            handleFileProcessingError(config.inputPath, e);
         }
     }
 
     /**
-     * Legge e normalizza il contenuto di una formula logica da file
+     * Esegue la pipeline completa di conversione della formula.
+     * Coordina conversione CNF e applicazione ottimizzazioni opzionali.
+     *
+     * @param config configurazione elaborazione
+     * @return risultato processamento con formula finale e informazioni
+     */
+    private static FormulaProcessingResult processFormulaConversionPipeline(Configuration config) throws Exception {
+        // Step 1: Lettura e conversione CNF base
+        String formulaText = readFormulaFromFile(config.inputPath);
+        CNFConversionResult cnfResult = convertToCNF(formulaText);
+        saveCNFToFile(cnfResult.cnfString, config.inputPath, config.outputPath);
+
+        CNFConverter finalFormula = cnfResult.cnfFormula;
+        StringBuilder conversionInfo = new StringBuilder();
+        boolean isECNF = false;
+
+        // Step 2: Applicazione ottimizzazione Tseitin (opzionale)
+        if (config.useTseitin) {
+            TseitinConversionResult tseitinResult = applyTseitinOptimization(cnfResult);
+            finalFormula = tseitinResult.ecnfFormula;
+            conversionInfo.append(tseitinResult.conversionInfo);
+            isECNF = true;
+
+            saveECNFToFile(tseitinResult.ecnfString, config.inputPath, config.outputPath);
+            saveTseitinStatsToFile(tseitinResult.conversionInfo, config.inputPath, config.outputPath);
+        }
+
+        // Step 3: Applicazione principio sussunzione (opzionale)
+        if (config.useSubsumption) {
+            SubsumptionOptimizationResult subsumptionResult = applySubsumptionOptimization(finalFormula, isECNF);
+            finalFormula = subsumptionResult.optimizedFormula;
+            conversionInfo.append(subsumptionResult.optimizationInfo);
+
+            saveSubsumptionStatsToFile(subsumptionResult.optimizationInfo, config.inputPath, config.outputPath, isECNF);
+        }
+
+        // Step 4: Salvataggio file opzioni attive
+        saveActiveOptionsFile(config, config.inputPath, config.outputPath);
+
+        return new FormulaProcessingResult(finalFormula, conversionInfo.toString(), isECNF);
+    }
+
+    /**
+     * Gestisce risultato di elaborazione riuscita con generazione output completo.
+     */
+    private static void handleSuccessfulResult(SATResult satResult, FormulaProcessingResult formulaResult, Configuration config) throws IOException {
+        saveCompleteResults(satResult, formulaResult.finalFormula, config.inputPath, config.outputPath, formulaResult.conversionInfo, config);
+        displayFinalStatistics(satResult, formulaResult.finalFormula);
+    }
+
+    /**
+     * Gestisce caso di timeout durante risoluzione SAT.
+     */
+    private static void handleTimeoutResult(Configuration config) throws IOException {
+        System.out.println("TIMEOUT: Superato il limite di " + config.timeoutSeconds + " secondi");
+        saveTimeoutResult(config.inputPath, config.outputPath, config.timeoutSeconds, config);
+    }
+
+    /**
+     * Gestisce errori durante elaborazione file con logging appropriato.
+     */
+    private static void handleFileProcessingError(String filePath, Exception e) {
+        LOGGER.log(Level.SEVERE, "Errore elaborazione file: " + filePath, e);
+        System.out.println("Errore durante l'elaborazione: " + e.getMessage());
+    }
+
+    //endregion
+
+    //region PIPELINE CONVERSIONE FORMULA
+
+    /**
+     * Legge il contenuto di una formula logica da file con validazione.
      */
     private static String readFormulaFromFile(String filePath) throws IOException {
         System.out.println("1. Lettura formula logica...");
-
         String content = Files.readString(Path.of(filePath)).trim();
         LOGGER.info("Formula letta: " + content);
-
         return content;
     }
 
     /**
-     * Converte una formula da notazione infix a forma normale congiuntiva (CNF).
-     * Utilizza ANTLR per parsing e CNFConverter per trasformazione.
+     * Converte formula da notazione infix a CNF usando pipeline ANTLR.
      */
     private static CNFConversionResult convertToCNF(String formulaText) throws Exception {
         System.out.println("2. Conversione in CNF...");
@@ -335,9 +334,9 @@ public final class Main {
     }
 
     /**
-     * Converte una formula CNF in E-CNF utilizzando l'algoritmo di Tseitin.
+     * Applica ottimizzazione Tseitin per conversione in E-CNF.
      */
-    private static TseitinConversionResult convertToECNF(CNFConversionResult cnfResult) throws Exception {
+    private static TseitinConversionResult applyTseitinOptimization(CNFConversionResult cnfResult) throws Exception {
         System.out.println("3a. Conversione Tseitin in E-CNF...");
 
         TseitinConverter tseitinConverter = new TseitinConverter();
@@ -350,7 +349,7 @@ public final class Main {
     }
 
     /**
-     * Applica il principio di sussunzione per ottimizzare la formula
+     * Applica principio di sussunzione per eliminazione clausole ridondanti.
      */
     private static SubsumptionOptimizationResult applySubsumptionOptimization(CNFConverter formula, boolean isECNF) throws Exception {
         String stepNumber = isECNF ? "3b" : "3a";
@@ -366,63 +365,63 @@ public final class Main {
         return new SubsumptionOptimizationResult(optimizedFormula, optimizationInfo);
     }
 
+    //endregion
+
+    //region RISOLUZIONE SAT
+
     /**
-     * Risolve una formula CNF utilizzando l'algoritmo CDCL con gestione timeout.
+     * Esegue risoluzione SAT con algoritmo CDCL e gestione timeout.
      * Utilizza ExecutorService per controllo temporale e interruzione sicura.
+     *
+     * @param cnfFormula formula CNF da risolvere
+     * @param timeoutSeconds timeout massimo in secondi
+     * @return risultato SAT o null se timeout
      */
-    private static SATResult solveSATWithTimeout(CNFConverter cnfFormula, int timeoutSeconds) {
+    private static SATResult executeSATSolving(CNFConverter cnfFormula, int timeoutSeconds) {
         System.out.println("4. Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         CDCLSolver solver = new CDCLSolver(cnfFormula);
 
         try {
-            // Esecuzione asincrona con timeout
             Callable<SATResult> solverTask = solver::solve;
             Future<SATResult> future = executor.submit(solverTask);
-
             return future.get(timeoutSeconds, TimeUnit.SECONDS);
 
         } catch (TimeoutException e) {
             LOGGER.warning("Timeout raggiunto dopo " + timeoutSeconds + " secondi");
-            return null; // Indica timeout al chiamante
+            return null;
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Errore durante risoluzione SAT", e);
             throw new RuntimeException("Errore nella risoluzione SAT", e);
 
         } finally {
-            executor.shutdownNow(); // Terminazione forzata
+            executor.shutdownNow();
         }
     }
 
     //endregion
 
-
-    // region ELABORAZIONE DIRECTORY
+    //region ELABORAZIONE DIRECTORY BATCH
 
     /**
-     * Elabora tutti i file .txt in una directory specificata.
-     * Fornisce elaborazione batch con statistiche aggregate.
+     * Elabora tutti i file .txt in una directory con processing batch parallelo.
+     * Fornisce statistiche aggregate e gestione errori per singoli file.
      */
-    private static void processDirectory(String dirPath, String outputPath, int timeoutSeconds, Configuration config) {
-        LOGGER.info("Inizio elaborazione directory: " + dirPath);
+    private static void processDirectoryBatch(Configuration config) {
+        LOGGER.info("Inizio elaborazione directory: " + config.inputPath);
 
-        // Validazione directory input
-        if (!validateInputDirectory(dirPath)) return;
+        if (!validateInputDirectory(config.inputPath)) return;
 
         try {
-            // Raccolta file da elaborare
-            List<File> txtFiles = collectTxtFiles(dirPath);
+            List<File> txtFiles = collectTxtFiles(config.inputPath);
             if (txtFiles.isEmpty()) {
                 System.out.println("Nessun file .txt trovato nella directory specificata.");
                 return;
             }
 
-            // Elaborazione sequenziale batch
-            BatchResult batchResult = processBatch(txtFiles, outputPath, timeoutSeconds, config);
-
-            // Riepilogo finale
+            BatchResult batchResult = executeBatchProcessing(txtFiles, config);
             displayBatchSummary(batchResult);
 
         } catch (IOException e) {
@@ -432,7 +431,7 @@ public final class Main {
     }
 
     /**
-     * Raccoglie tutti i file .txt dalla directory, ordinati alfabeticamente
+     * Raccoglie tutti i file .txt dalla directory con ordinamento alfabetico.
      */
     private static List<File> collectTxtFiles(String dirPath) throws IOException {
         System.out.println("Ricerca file .txt nella directory...");
@@ -451,36 +450,26 @@ public final class Main {
     }
 
     /**
-     * Elabora sequenzialmente una lista di file con gestione errori isolata
+     * Esegue elaborazione batch sequenziale con gestione errori isolata per ogni file.
      */
-    private static BatchResult processBatch(List<File> files, String outputPath, int timeoutSeconds, Configuration config) {
+    private static BatchResult executeBatchProcessing(List<File> files, Configuration config) {
         BatchResult result = new BatchResult(files.size());
 
-        System.out.println("Timeout per file: " + timeoutSeconds + " secondi");
-
-        // Mostra ottimizzazioni
-        List<String> activeOpts = new ArrayList<>();
-        if (config.useTseitin) activeOpts.add("Tseitin");
-        if (config.useSubsumption) activeOpts.add("Sussunzione");
-        if (config.useWatchedLiterals) activeOpts.add("Watched Literals");
-        if (config.useRestart) activeOpts.add("Restart");
-
+        System.out.println("Timeout per file: " + config.timeoutSeconds + " secondi");
+        List<String> activeOpts = buildActiveOptimizationsList(config);
         System.out.println("Ottimizzazioni: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)) + "\n");
 
         for (File file : files) {
             try {
                 System.out.println("Elaborazione: " + file.getName());
 
-                ProcessResult fileResult = processFile(file.getAbsolutePath(), outputPath, timeoutSeconds, config);
+                // Crea configurazione temporanea per il file corrente
+                Configuration fileConfig = new Configuration(
+                        file.getAbsolutePath(), config.outputPath, true, config.timeoutSeconds,
+                        config.useTseitin, config.useSubsumption, config.useWatchedLiterals, config.useRestart);
 
-                // Aggiornamento statistiche batch
-                if (fileResult.isSuccess()) {
-                    result.incrementSuccess();
-                } else if (fileResult.isTimeout()) {
-                    result.incrementTimeout();
-                } else {
-                    result.incrementError();
-                }
+                processSingleFile(fileConfig);
+                result.incrementSuccess();
 
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Errore file: " + file.getName(), e);
@@ -494,13 +483,31 @@ public final class Main {
         return result;
     }
 
+    /**
+     * Valida accessibilità e permessi directory di input.
+     */
+    private static boolean validateInputDirectory(String dirPath) {
+        File dir = new File(dirPath);
+
+        if (!dir.exists() || !dir.isDirectory()) {
+            System.out.println("Errore: directory non esistente o non valida: " + dirPath);
+            return false;
+        }
+
+        if (!dir.canRead()) {
+            System.out.println("Errore: directory non leggibile: " + dirPath);
+            return false;
+        }
+
+        return true;
+    }
+
     //endregion
 
-
-    // region SALVATAGGIO E OUTPUT
+    //region SALVATAGGIO E GESTIONE OUTPUT
 
     /**
-     * Salva la formula CNF in un file dedicato per tracciabilità
+     * Salva formula CNF in file dedicato per tracciabilità conversione.
      */
     private static void saveCNFToFile(String cnfString, String originalFilePath, String outputPath) throws IOException {
         System.out.println("3. Salvataggio formula CNF...");
@@ -519,7 +526,7 @@ public final class Main {
     }
 
     /**
-     * Salva la formula E-CNF (Tseitin) in un file dedicato - SOLO FORMULA
+     * Salva formula E-CNF (Tseitin) in file dedicato.
      */
     private static void saveECNFToFile(String ecnfString, String originalFilePath, String outputPath) throws IOException {
         System.out.println("3b. Salvataggio formula E-CNF...");
@@ -530,7 +537,6 @@ public final class Main {
         String baseFileName = getBaseFileName(originalFilePath);
         Path ecnfFilePath = ecnfDir.resolve(baseFileName + ".ecnf");
 
-        // SOLO LA FORMULA CONVERTITA - nessun commento o metadata
         try (FileWriter writer = new FileWriter(ecnfFilePath.toFile())) {
             writer.write(ecnfString);
         }
@@ -539,7 +545,7 @@ public final class Main {
     }
 
     /**
-     * Salva le statistiche di conversione Tseitin in file separato
+     * Salva statistiche di conversione Tseitin in file separato.
      */
     private static void saveTseitinStatsToFile(String conversionInfo, String originalFilePath, String outputPath) throws IOException {
         System.out.println("3c. Salvataggio statistiche conversione Tseitin...");
@@ -558,7 +564,7 @@ public final class Main {
     }
 
     /**
-     * Salva le statistiche di ottimizzazione sussunzione in file separato
+     * Salva statistiche di ottimizzazione sussunzione.
      */
     private static void saveSubsumptionStatsToFile(String optimizationInfo, String originalFilePath, String outputPath, boolean isECNF) throws IOException {
         String stepNumber = isECNF ? "3c" : "3b";
@@ -578,10 +584,9 @@ public final class Main {
     }
 
     /**
-     * Salva file con opzioni attive nella directory STATS
+     * Salva file di riepilogo delle opzioni attive durante elaborazione.
      */
     private static void saveActiveOptionsFile(Configuration config, String originalFilePath, String outputPath) throws IOException {
-        // Verifica se ci sono ottimizzazioni attive
         List<String> activeOptions = new ArrayList<>();
         if (config.useTseitin) activeOptions.add("TSEITIN");
         if (config.useSubsumption) activeOptions.add("SUBSUMPTION");
@@ -619,11 +624,11 @@ public final class Main {
     }
 
     /**
-     * Salva i risultati SAT completi con formato strutturato
+     * Salva risultati SAT completi con modello o prova.
      */
-    private static void saveResultsToFile(SATResult result, CNFConverter cnfFormula,
-                                          String originalFilePath, String outputPath,
-                                          String conversionInfo, Configuration config) throws IOException {
+    private static void saveCompleteResults(SATResult result, CNFConverter cnfFormula,
+                                            String originalFilePath, String outputPath,
+                                            String conversionInfo, Configuration config) throws IOException {
         System.out.println("5. Salvataggio risultati...");
 
         Path resultDir = getResultDirectory(originalFilePath, outputPath);
@@ -633,18 +638,17 @@ public final class Main {
         Path resultFilePath = resultDir.resolve(baseFileName + ".result");
 
         try (FileWriter writer = new FileWriter(resultFilePath.toFile())) {
-            writeCompleteResult(writer, result, originalFilePath, cnfFormula, conversionInfo, config);
+            writeStructuredResult(writer, result, originalFilePath, conversionInfo, config);
         }
 
         LOGGER.info("Risultati salvati: " + resultFilePath);
     }
 
     /**
-     * Scrive un report completo strutturato del risultato SAT
+     * Scrive risultato SAT strutturato con header e sezioni organizzate.
      */
-    private static void writeCompleteResult(FileWriter writer, SATResult result,
-                                            String originalFilePath, CNFConverter cnfFormula,
-                                            String conversionInfo, Configuration config) throws IOException {
+    private static void writeStructuredResult(FileWriter writer, SATResult result,
+                                              String originalFilePath, String conversionInfo, Configuration config) throws IOException {
         // Header del report
         writer.write("-------------------\n");
         writer.write("| RISOLUZIONE SAT |\n");
@@ -654,11 +658,9 @@ public final class Main {
 
         if (config.useTseitin) {
             writer.write("-> File E-CNF: " + getBaseFileName(originalFilePath) + ".ecnf\n");
-            writer.write("\n");
-            writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".ecnf\n");
+            writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".ecnf\n");
         } else {
-            writer.write("\n");
-            writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".cnf\n");
+            writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".cnf\n");
         }
 
         writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
@@ -681,7 +683,7 @@ public final class Main {
     }
 
     /**
-     * Scrive risultato SAT con modello delle variabili
+     * Scrive risultato SAT con modello delle variabili.
      */
     private static void writeSATResult(FileWriter writer, SATResult result, boolean useTseitin) throws IOException {
         String formulaType = useTseitin ? "E-CNF" : "CNF";
@@ -703,7 +705,7 @@ public final class Main {
     }
 
     /**
-     * Scrive risultato UNSAT con prova di risoluzione
+     * Scrive risultato UNSAT con prova di risoluzione.
      */
     private static void writeUNSATResult(FileWriter writer, SATResult result, boolean useTseitin) throws IOException {
         String formulaType = useTseitin ? "E-CNF" : "CNF";
@@ -725,25 +727,8 @@ public final class Main {
         }
     }
 
-    //endregion
-
-
-    //region GESTIONE TIMEOUT E CASI SPECIALI
-
     /**
-     * Gestisce il caso di timeout durante risoluzione SAT
-     */
-    private static ProcessResult handleTimeoutCase(String filePath, String outputPath, int timeoutSeconds, Configuration config) throws IOException {
-        System.out.println("TIMEOUT: Superato il limite di " + timeoutSeconds + " secondi");
-
-        // Salva report specifico per timeout
-        saveTimeoutResult(filePath, outputPath, timeoutSeconds, config);
-
-        return ProcessResult.timeout();
-    }
-
-    /**
-     * Crea un report specifico per casi di timeout
+     * Salva report specifico per casi di timeout.
      */
     private static void saveTimeoutResult(String filePath, String outputPath, int timeoutSeconds, Configuration config) throws IOException {
         Path resultDir = getResultDirectory(filePath, outputPath);
@@ -761,11 +746,9 @@ public final class Main {
 
             if (config.useTseitin) {
                 writer.write("-> File E-CNF: " + baseFileName + ".ecnf\n");
-                writer.write("\n");
-                writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".ecnf\n");
+                writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".ecnf\n");
             } else {
-                writer.write("\n");
-                writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".cnf\n");
+                writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".cnf\n");
             }
 
             writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
@@ -781,11 +764,70 @@ public final class Main {
 
     //endregion
 
-
-    //region VISUALIZZAZIONE STATISTICHE
+    //region UTILITÀ GESTIONE PERCORSI E FILE
 
     /**
-     * Visualizza statistiche finali dettagliate per singolo file
+     * Ottiene directory per file CNF con creazione automatica struttura.
+     */
+    private static Path getCNFDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("CNF");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("CNF") : Paths.get("CNF");
+        }
+    }
+
+    /**
+     * Ottiene directory per file E-CNF con creazione automatica struttura.
+     */
+    private static Path getECNFDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("E-CNF");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("E-CNF") : Paths.get("E-CNF");
+        }
+    }
+
+    /**
+     * Ottiene directory per file statistiche con creazione automatica struttura.
+     */
+    private static Path getStatsDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("STATS");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("STATS") : Paths.get("STATS");
+        }
+    }
+
+    /**
+     * Ottiene directory per file risultati con creazione automatica struttura.
+     */
+    private static Path getResultDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("RESULT");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("RESULT") : Paths.get("RESULT");
+        }
+    }
+
+    /**
+     * Estrae nome base del file senza estensione per denominazione output.
+     */
+    private static String getBaseFileName(String filePath) {
+        String fileName = Paths.get(filePath).getFileName().toString();
+        return fileName.substring(0, fileName.lastIndexOf('.'));
+    }
+
+    //endregion
+
+    //region STATISTICHE E VISUALIZZAZIONE
+
+    /**
+     * Visualizza statistiche finali dettagliate per elaborazione singolo file.
      */
     private static void displayFinalStatistics(SATResult result, CNFConverter cnfFormula) {
         System.out.println("6. Elaborazione completata!\n");
@@ -798,7 +840,7 @@ public final class Main {
     }
 
     /**
-     * Mostra riepilogo completo per elaborazione batch
+     * Mostra riepilogo completo per elaborazione batch directory.
      */
     private static void displayBatchSummary(BatchResult result) {
         System.out.println("\n=== RIEPILOGO ELABORAZIONE DIRECTORY ===");
@@ -815,88 +857,8 @@ public final class Main {
         System.out.println("=========================================\n");
     }
 
-    //endregion
-
-
-    //region UTILITÀ E HELPER METHODS
-
     /**
-     * Ottiene la directory per file CNF (creata dinamicamente)
-     */
-    private static Path getCNFDirectory(String originalFilePath, String outputPath) {
-        if (outputPath != null) {
-            return Paths.get(outputPath).resolve("CNF");
-        } else {
-            Path parentDir = Paths.get(originalFilePath).getParent();
-            return parentDir != null ? parentDir.resolve("CNF") : Paths.get("CNF");
-        }
-    }
-
-    /**
-     * Ottiene la directory per file E-CNF (creata dinamicamente)
-     */
-    private static Path getECNFDirectory(String originalFilePath, String outputPath) {
-        if (outputPath != null) {
-            return Paths.get(outputPath).resolve("E-CNF");
-        } else {
-            Path parentDir = Paths.get(originalFilePath).getParent();
-            return parentDir != null ? parentDir.resolve("E-CNF") : Paths.get("E-CNF");
-        }
-    }
-
-    /**
-     * Ottiene la directory per file statistiche (creata dinamicamente)
-     */
-    private static Path getStatsDirectory(String originalFilePath, String outputPath) {
-        if (outputPath != null) {
-            return Paths.get(outputPath).resolve("STATS");
-        } else {
-            Path parentDir = Paths.get(originalFilePath).getParent();
-            return parentDir != null ? parentDir.resolve("STATS") : Paths.get("STATS");
-        }
-    }
-
-    /**
-     * Ottiene la directory per file risultati (creata dinamicamente)
-     */
-    private static Path getResultDirectory(String originalFilePath, String outputPath) {
-        if (outputPath != null) {
-            return Paths.get(outputPath).resolve("RESULT");
-        } else {
-            Path parentDir = Paths.get(originalFilePath).getParent();
-            return parentDir != null ? parentDir.resolve("RESULT") : Paths.get("RESULT");
-        }
-    }
-
-    /**
-     * Estrae nome base del file senza estensione
-     */
-    private static String getBaseFileName(String filePath) {
-        String fileName = Paths.get(filePath).getFileName().toString();
-        return fileName.substring(0, fileName.lastIndexOf('.'));
-    }
-
-    /**
-     * Valida directory di input per accessibilità
-     */
-    private static boolean validateInputDirectory(String dirPath) {
-        File dir = new File(dirPath);
-
-        if (!dir.exists() || !dir.isDirectory()) {
-            System.out.println("Errore: directory non esistente o non valida: " + dirPath);
-            return false;
-        }
-
-        if (!dir.canRead()) {
-            System.out.println("Errore: directory non leggibile: " + dirPath);
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Estrae numero di variabili uniche dalla formula CNF
+     * Estrae numero di variabili uniche dalla formula CNF.
      */
     private static int extractVariableCount(CNFConverter cnfFormula) {
         Set<String> variables = new HashSet<>();
@@ -905,7 +867,7 @@ public final class Main {
     }
 
     /**
-     * Raccoglie ricorsivamente tutte le variabili dalla formula
+     * Raccoglie ricorsivamente tutte le variabili dalla formula.
      */
     private static void collectVariablesRecursively(CNFConverter formula, Set<String> variables) {
         if (formula == null) return;
@@ -935,7 +897,7 @@ public final class Main {
     }
 
     /**
-     * Estrae numero di clausole dalla formula CNF
+     * Estrae numero di clausole dalla formula CNF.
      */
     private static int extractClauseCount(CNFConverter cnfFormula) {
         if (cnfFormula == null) return 0;
@@ -953,8 +915,12 @@ public final class Main {
         };
     }
 
+    //endregion
+
+    //region HELP E DOCUMENTAZIONE
+
     /**
-     * Visualizza informazioni di help complete
+     * Visualizza informazioni di help complete con esempi di utilizzo.
      */
     private static void printHelp() {
         System.out.println("\n=== SOLUTORE SAT CDCL v2.1.0 ===");
@@ -1001,11 +967,11 @@ public final class Main {
 
     //endregion
 
-
-    //region CLASSI DI SUPPORTO E CONFIGURAZIONE
+    //region CLASSI DI CONFIGURAZIONE E SUPPORTO
 
     /**
-     * Configurazione validata dai parametri linea di comando
+     * Configurazione validata dell'applicazione contenente tutti i parametri di esecuzione.
+     * Immutable dopo costruzione per garantire thread-safety e consistenza.
      */
     private static class Configuration {
         final String inputPath;
@@ -1031,12 +997,13 @@ public final class Main {
     }
 
     /**
-     * Parser per parametri linea di comando con validazione completa
+     * Parser avanzato per parametri linea di comando con validazione completa.
+     * Gestisce tutti i casi edge e fornisce messaggi di errore informativi.
      */
     private static class CommandLineParser {
 
         /**
-         * Analizza e valida tutti i parametri forniti
+         * Analizza e valida tutti i parametri forniti costruendo configurazione completa.
          */
         public Configuration parse(String[] args) {
             String inputPath = null;
@@ -1084,7 +1051,6 @@ public final class Main {
                 }
             }
 
-            // Validazione finale
             if (inputPath == null) {
                 throw new IllegalArgumentException("Specificare un file (-f) o directory (-d)");
             }
@@ -1094,7 +1060,7 @@ public final class Main {
         }
 
         /**
-         * Parsa le flag di ottimizzazione
+         * Parsa flag di ottimizzazione con gestione valori speciali.
          */
         private OptimizationFlags parseOptimizationFlags(String flagsStr) {
             if (flagsStr == null || flagsStr.trim().isEmpty()) {
@@ -1107,13 +1073,11 @@ public final class Main {
             boolean restart = false;
 
             if (flagsStr.equals(OPT_ALL)) {
-                // Tutte le ottimizzazioni
                 tseitin = true;
                 subsumption = true;
                 watchedLiterals = true;
                 restart = true;
             } else {
-                // Parsing singole flag
                 for (char flag : flagsStr.toCharArray()) {
                     switch (String.valueOf(flag)) {
                         case OPT_TSEITIN -> tseitin = true;
@@ -1129,7 +1093,7 @@ public final class Main {
         }
 
         /**
-         * Estrae il prossimo argomento con validazione presenza
+         * Estrae prossimo argomento con validazione presenza.
          */
         private String getNextArgument(String[] args, int currentIndex, String argumentType) {
             if (currentIndex + 1 >= args.length) {
@@ -1140,7 +1104,7 @@ public final class Main {
         }
 
         /**
-         * Valida e converte timeout con controlli range
+         * Valida e converte timeout con controlli range.
          */
         private int parseAndValidateTimeout(String[] args, int currentIndex) {
             String timeoutStr = getNextArgument(args, currentIndex, "numero di secondi");
@@ -1157,7 +1121,7 @@ public final class Main {
         }
 
         /**
-         * Valida esistenza e accessibilità file
+         * Valida esistenza e accessibilità file.
          */
         private void validateFileExists(String filePath) {
             File file = new File(filePath);
@@ -1173,7 +1137,7 @@ public final class Main {
         }
 
         /**
-         * Valida esistenza e accessibilità directory
+         * Valida esistenza e accessibilità directory.
          */
         private void validateDirectoryExists(String dirPath) {
             File dir = new File(dirPath);
@@ -1189,7 +1153,7 @@ public final class Main {
         }
 
         /**
-         * Valida o crea directory di output con permessi
+         * Valida o crea directory di output con permessi.
          */
         private void validateOrCreateOutputDirectory(String dirPath) {
             File dir = new File(dirPath);
@@ -1210,7 +1174,7 @@ public final class Main {
     }
 
     /**
-     * Flag di ottimizzazione parsate
+     * Flag di ottimizzazione parsate dalla linea di comando.
      */
     private static class OptimizationFlags {
         final boolean tseitin;
@@ -1227,28 +1191,7 @@ public final class Main {
     }
 
     /**
-     * Risultato elaborazione singolo file
-     */
-    private static class ProcessResult {
-        private final ResultType type;
-
-        private enum ResultType { SUCCESS, TIMEOUT, ERROR }
-
-        private ProcessResult(ResultType type) {
-            this.type = type;
-        }
-
-        public boolean isSuccess() { return type == ResultType.SUCCESS; }
-        public boolean isTimeout() { return type == ResultType.TIMEOUT; }
-        public boolean isError() { return type == ResultType.ERROR; }
-
-        public static ProcessResult success() { return new ProcessResult(ResultType.SUCCESS); }
-        public static ProcessResult timeout() { return new ProcessResult(ResultType.TIMEOUT); }
-        public static ProcessResult error() { return new ProcessResult(ResultType.ERROR); }
-    }
-
-    /**
-     * Risultato elaborazione batch con statistiche aggregate
+     * Risultato di elaborazione batch con statistiche aggregate.
      */
     private static class BatchResult {
         final int totalFiles;
@@ -1266,7 +1209,7 @@ public final class Main {
     }
 
     /**
-     * Risultato conversione CNF con doppia rappresentazione
+     * Risultato conversione CNF base con formula e rappresentazione stringa.
      */
     private static class CNFConversionResult {
         final CNFConverter cnfFormula;
@@ -1279,7 +1222,7 @@ public final class Main {
     }
 
     /**
-     * Risultato conversione Tseitin con informazioni aggiuntive
+     * Risultato conversione Tseitin completa con informazioni dettagliate.
      */
     private static class TseitinConversionResult {
         final CNFConverter ecnfFormula;
@@ -1294,7 +1237,7 @@ public final class Main {
     }
 
     /**
-     * Risultato ottimizzazione sussunzione
+     * Risultato ottimizzazione sussunzione con formula e statistiche.
      */
     private static class SubsumptionOptimizationResult {
         final CNFConverter optimizedFormula;
@@ -1303,6 +1246,21 @@ public final class Main {
         SubsumptionOptimizationResult(CNFConverter optimizedFormula, String optimizationInfo) {
             this.optimizedFormula = optimizedFormula;
             this.optimizationInfo = optimizationInfo;
+        }
+    }
+
+    /**
+     * Risultato completo di processamento formula con metadata.
+     */
+    private static class FormulaProcessingResult {
+        final CNFConverter finalFormula;
+        final String conversionInfo;
+        final boolean isECNF;
+
+        FormulaProcessingResult(CNFConverter finalFormula, String conversionInfo, boolean isECNF) {
+            this.finalFormula = finalFormula;
+            this.conversionInfo = conversionInfo;
+            this.isECNF = isECNF;
         }
     }
 

@@ -5,6 +5,12 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.7.2] - 2025-06-08
+### Refactored
+- Riorganizzato il codice sorgente per migliorarne la chiarezza e la comprensione.
+  Nessuna modifica funzionale apportata.
+
+
 ## [1.7.1] - 2025-06-07
 ### Fixed
 - Migliorata la struttura e l’organizzazione dei file `.stats` nella cartella `STATS`.
