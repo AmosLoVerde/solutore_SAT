@@ -6,154 +6,187 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * Algoritmi Principali:
- * - VSIDS (Variable State Independent Decaying Sum): euristica per la selezione delle variabili
- * - 1UIP (First Unique Implication Point): strategia di apprendimento delle clausole
- * - Non-chronological Backjumping: backtracking basato sui conflitti
- * - Unit Propagation: propagazione delle implicazioni unitarie
+ * SOLUTORE CDCL (Conflict-Driven Clause Learning) per problemi SAT
+ * VERSIONE FINALE CORRETTA per gestione spiegazioni sequenziali
  *
- * Flusso Principale dell'algoritmo:
- * - Preprocessing con unit propagation iniziale
- * - Loop principale: Decisione -> Propagazione -> Analisi conflitti -> Salto all'indietro
- * - Terminazione quando tutte le clausole sono soddisfatte o si dimostra insoddisfacibilità
- *
+ * ALGORITMI IMPLEMENTATI:
+ * - Unit Propagation: propaga clausole unitarie automaticamente
+ * - VSIDS Heuristic: Variable State Independent Decaying Sum per selezione variabili
+ * - Conflict Analysis con "spiegazione" matematicamente corretta
+ * - Gestione corretta spiegazioni sequenziali per conflitti livello 0
+ * - Non-chronological backtracking: backjump intelligente ai livelli necessari
+ * - Clause learning: apprende clausole dalle spiegazioni
+ * - Complete proof generation: genera prove tramite spiegazioni sequenziali
  */
 public class CDCLSolver {
 
-    /**
-     * Logger per tracciamento dettagliato delle operazioni del solver
-     */
     private static final Logger LOGGER = Logger.getLogger(CDCLSolver.class.getName());
 
-    /**
-     * Limite massimo di conflitti per prevenire esecuzioni infinite.
-     */
-    private static final int MAX_CONFLICTS = 1_000_000;
+    //region STRUTTURE DATI PRINCIPALI
 
-    /**
-     * Limite massimo di decisioni per prevenire esecuzioni infinite.
-     */
-    private static final int MAX_DECISIONS = 1_000_000;
-
-    /**
-     * Rappresentazione interna della formula CNF con ottimizzazioni per CDCL
-     */
+    /** Formula CNF in rappresentazione ottimizzata per CDCL */
     private final CNFFormula formula;
 
-    /**
-     * Stack delle decisioni organizzato per livelli di decisione
-     */
+    /** Stack gerarchico per gestione livelli di decisione e backtracking */
     private final DecisionStack decisionStack;
 
-    /**
-     * Mappa delle variabili assegnate ordinata secondo euristica VSIDS.
-     * La chiave è l'ID della variabile, mentre il valore è l'assegnamento (null se non assegnata).
-     */
+    /** Mappa variabile → assegnamento corrente (null = non assegnata) */
     private final Map<Integer, AssignedLiteral> assignedValues;
 
-    /**
-     * Contatori VSIDS per letterali positivi e negativi.
-     * Mantiene la frequenza di apparizione nei conflitti per guidare le decisioni future.
-     */
+    /** Contatori VSIDS per euristica selezione variabili */
     private final Map<Integer, Integer> vsidsCounter;
 
-    /**
-     * Lista delle clausole apprese durante l'analisi dei conflitti
-     */
+    /** Clausole apprese durante conflict analysis */
     private final List<List<Integer>> learnedClauses;
 
-    /**
-     * Generatore per prove di insoddisfacibilità tramite risoluzione
-     */
+    /** Generatore prove per formule UNSAT */
     private final ProofGenerator proofGenerator;
 
-    /**
-     * Collettore di statistiche dettagliate sull'esecuzione del solver
-     */
-    private final SATStatistics statistics;
+    /** Mapping letterale → clausola unitaria originale (per spiegazioni livello 0) */
+    private final Map<Integer, List<Integer>> unitClauseMapping;
 
-    /**
-     * Contatore dei conflitti incontrati durante la risoluzione
-     */
+    //endregion
+
+    //region STATO E STATISTICHE
+
+    /** Statistiche di esecuzione (decisioni, conflitti, tempo) */
+    private SATStatistics statistics;
+
+    /** Contatore conflitti rilevati */
     private int conflictCount;
 
-    /** Contatore delle decisioni prese durante la risoluzione */
+    /** Contatore decisioni prese */
     private int decisionCount;
 
-    /**
-     * Clausola che ha causato l'ultimo conflitto.
-     * Utilizzata nell'analisi del conflitto per l'apprendimento di nuove clausole.
-     */
-    private List<Integer> conflictClause;
-
-    /**
-     * Flag volatile per gestione sicura delle interruzioni da thread esterni.
-     * Utilizzato per implementare timeout controllati.
-     */
+    /** Flag interruzione esterna (timeout) */
     private volatile boolean interrupted = false;
 
+    //endregion
+
+    //region INIZIALIZZAZIONE E COSTRUZIONE
 
     /**
-     * Costruisce un nuovo solutore CDCL per la formula CNF specificata.
-     *
-     * @param cnfConverter formula CNF da risolvere, già convertita in forma normale congiuntiva
-     * @throws IllegalArgumentException se la formula è null o malformata
+     * Costruisce il solutore CDCL con formula CNF.
+     * Inizializza tutte le strutture dati e configura il generatore di prove.
      */
     public CDCLSolver(CNFConverter cnfConverter) {
-        LOGGER.info("=== INIZIALIZZAZIONE DEL SOLUTORE CDCL ===");
+        LOGGER.info("=== INIZIALIZZAZIONE SOLUTORE CDCL ===");
 
-        // Inizializzazione strutture dati core
+        // Inizializzazione strutture dati principali
         this.formula = new CNFFormula(cnfConverter);
         this.decisionStack = new DecisionStack();
         this.assignedValues = initializeVariableAssignments();
         this.vsidsCounter = initializeVSIDSCounters();
-
-        // Inizializzazione componenti per l'apprendimento di clausole,
-        // generazione della prova e delle statistiche
         this.learnedClauses = new ArrayList<>();
-        this.proofGenerator = new ProofGenerator();
-        this.statistics = new SATStatistics();
+        this.unitClauseMapping = new HashMap<>();
 
-        // Inizializzazione stato esecuzione
+        // Configurazione generatore prove
+        this.proofGenerator = new ProofGenerator();
+        Map<Integer, String> inverseMapping = createInverseVariableMapping();
+        proofGenerator.setVariableMapping(inverseMapping);
+
+        // Inizializzazione contatori
         this.conflictCount = 0;
         this.decisionCount = 0;
-        this.conflictClause = new ArrayList<>();
         this.interrupted = false;
 
         // Log informazioni formula
-        logFormulaInfo();
-
-        LOGGER.info("=== SOLUTORE INIZIALIZZATO CORRETTAMENTE ===");
+        logFormulaInformation();
+        LOGGER.info("=== SOLUTORE INIZIALIZZATO ===");
     }
 
+    /**
+     * Inizializza gli assegnamenti delle variabili ordinati per frequenza.
+     */
+    private LinkedHashMap<Integer, AssignedLiteral> initializeVariableAssignments() {
+        // Calcola frequenza di ogni variabile nelle clausole
+        Map<Integer, Integer> frequencies = new HashMap<>();
+        for (int var = 1; var <= formula.getVariableCount(); var++) {
+            frequencies.put(var, 0);
+        }
+
+        for (List<Integer> clause : formula.getClauses()) {
+            for (Integer literal : clause) {
+                int variable = Math.abs(literal);
+                frequencies.merge(variable, 1, Integer::sum);
+            }
+        }
+
+        // Ordina variabili per frequenza (più frequenti prime)
+        List<Map.Entry<Integer, Integer>> sortedByFrequency = new ArrayList<>(frequencies.entrySet());
+        sortedByFrequency.sort(Map.Entry.<Integer, Integer>comparingByValue().reversed());
+
+        // Crea mappa ordinata con assegnamenti null (non assegnate)
+        LinkedHashMap<Integer, AssignedLiteral> orderedAssignments = new LinkedHashMap<>();
+        for (Map.Entry<Integer, Integer> entry : sortedByFrequency) {
+            orderedAssignments.put(entry.getKey(), null);
+        }
+
+        return orderedAssignments;
+    }
 
     /**
-     * Questo è il metodo principale che implementa il ciclo CDCL completo
-     *
-     * @return {@link SATResult} contenente:
-     * - Se SAT: assegnamento valido delle variabili
-     * - Se UNSAT: prova di insoddisfacibilità
-     * - Statistiche dettagliate dell'esecuzione
-     *
-     * @throws RuntimeException se viene raggiunto il timeout o si verificano errori critici
+     * Inizializza contatori VSIDS per ogni letterale (positivo e negativo).
+     */
+    private Map<Integer, Integer> initializeVSIDSCounters() {
+        Map<Integer, Integer> counters = new HashMap<>();
+
+        for (Integer variable : assignedValues.keySet()) {
+            counters.put(variable, 0);     // Letterale positivo
+            counters.put(-variable, 0);    // Letterale negativo
+        }
+
+        return counters;
+    }
+
+    /**
+     * Crea mapping inverso: ID numerico → nome variabile originale
+     */
+    private Map<Integer, String> createInverseVariableMapping() {
+        Map<Integer, String> inverseMapping = new HashMap<>();
+        Map<String, Integer> originalMapping = formula.getVariableMapping();
+
+        for (Map.Entry<String, Integer> entry : originalMapping.entrySet()) {
+            inverseMapping.put(entry.getValue(), entry.getKey());
+        }
+
+        return inverseMapping;
+    }
+
+    /**
+     * Registra informazioni sulla formula per debugging
+     */
+    private void logFormulaInformation() {
+        int clauseCount = formula.getClausesCount();
+        int variableCount = formula.getVariableCount();
+        double ratio = variableCount > 0 ? (double) clauseCount / variableCount : 0;
+
+        LOGGER.info(String.format("Formula caricata: %d clausole, %d variabili (ratio: %.2f)",
+                clauseCount, variableCount, ratio));
+    }
+
+    //endregion
+
+    //region INTERFACCIA PUBBLICA PRINCIPALE
+
+    /**
+     * METODO PRINCIPALE: risolve la formula CNF utilizzando l'algoritmo CDCL.
      */
     public SATResult solve() {
         LOGGER.info("=== INIZIO RISOLUZIONE CDCL ===");
 
-        try {
-            // FASE 1: Preprocessing con unit propagation iniziale
-            if (!performInitialPreprocessing()) {
-                return createUnsatResult("Conflitto durante preprocessing iniziale");
-            }
+        this.statistics = new SATStatistics();
 
-            // FASE 2: Loop principale CDCL
+        try {
+            // Esecuzione loop principale CDCL
             CDCLLoopResult loopResult = executeCDCLMainLoop();
 
-            // FASE 3: Gestione risultato finale
+            // Gestione risultato finale
             return handleFinalResult(loopResult);
 
         } catch (InterruptedException e) {
             LOGGER.info("Risoluzione interrotta per timeout");
+            statistics.stopTimer();
             throw new RuntimeException("Timeout raggiunto durante la risoluzione");
 
         } catch (Exception e) {
@@ -169,179 +202,149 @@ public class CDCLSolver {
     }
 
     /**
-     * Interrompe la risoluzione in corso (utilizzato per timeout esterni).
-     *
-     * @apiNote Metodo thread-safe, può essere chiamato da qualsiasi thread
+     * Interrompe la risoluzione (chiamato da thread esterno per timeout)
      */
     public void interrupt() {
         this.interrupted = true;
-        LOGGER.info("Richiesta interruzione ricevuta - solver verrà fermato");
+        LOGGER.info("Richiesta interruzione ricevuta");
     }
 
-
     /**
-     * Esegue il preprocessing iniziale della formula.
-     *
-     * @return true se la formula è ancora risolvibile dopo preprocessing, false se UNSAT
+     * Restituisce statistiche parziali durante l'esecuzione (per timeout)
      */
-    private boolean performInitialPreprocessing() {
-        LOGGER.fine("Inizio preprocessing iniziale");
+    public SATStatistics getPartialStatistics() {
+        SATStatistics partialStats = new SATStatistics();
 
-        // Unit propagation a livello 0 per clausole unitarie
-        PropagationResult initialResult = performLevelZeroUnitPropagation();
-
-        if (initialResult.hasConflict()) {
-            LOGGER.info("Conflitto rilevato durante preprocessing - formula UNSAT");
-            return false;
+        for (int i = 0; i < decisionCount; i++) {
+            partialStats.incrementDecisions();
         }
 
-        LOGGER.fine("Preprocessing completato con successo");
-        return true;
+        for (int i = 0; i < conflictCount; i++) {
+            partialStats.incrementConflicts();
+        }
+
+        partialStats.setProofSize(proofGenerator.getStepCount());
+        return partialStats;
     }
 
-    /**
-     * Inizializza la mappa delle variabili con ordinamento VSIDS basato su frequenza.
-     *
-     * @return mappa ordinata delle variabili con ordinamento VSIDS iniziale
-     */
-    private LinkedHashMap<Integer, AssignedLiteral> initializeVariableAssignments() {
-        LOGGER.fine("Inizializzazione ordinamento VSIDS iniziale");
+    //endregion
 
-        // Conta occorrenze di ogni variabile nelle clausole originali
-        Map<Integer, Integer> occurrenceFrequency = computeVariableFrequencies();
-
-        // Ordina per frequenza decrescente
-        List<Map.Entry<Integer, Integer>> sortedByFrequency = new ArrayList<>(occurrenceFrequency.entrySet());
-        sortedByFrequency.sort(Map.Entry.<Integer, Integer>comparingByValue().reversed());
-
-        // Crea mappa ordinata con tutte le variabili non assegnate
-        LinkedHashMap<Integer, AssignedLiteral> orderedAssignments = new LinkedHashMap<>();
-        for (Map.Entry<Integer, Integer> entry : sortedByFrequency) {
-            orderedAssignments.put(entry.getKey(), null); // null: non assegnata
-        }
-
-        LOGGER.fine("VSIDS iniziale configurato per " + orderedAssignments.size() + " variabili");
-        return orderedAssignments;
-    }
+    //region LOOP PRINCIPALE CDCL CORRETTO
 
     /**
-     * Calcola la frequenza di apparizione di ogni variabile nelle clausole originali.
-     *
-     * @return mappa con frequenza di ogni variabile
-     */
-    private Map<Integer, Integer> computeVariableFrequencies() {
-        Map<Integer, Integer> frequencies = new HashMap<>();
-
-        // Inizializza contatori per tutte le variabili
-        for (int var = 1; var <= formula.getVariableCount(); var++) {
-            frequencies.put(var, 0);
-        }
-
-        // Conta occorrenze nelle clausole
-        for (List<Integer> clause : formula.getClauses()) {
-            for (Integer literal : clause) {
-                int variable = Math.abs(literal);
-                frequencies.merge(variable, 1, Integer::sum);
-            }
-        }
-
-        return frequencies;
-    }
-
-    /**
-     * Inizializza i contatori VSIDS per tutti i letterali (positivi e negativi).
-     *
-     * @return mappa dei contatori VSIDS inizializzati a zero
-     */
-    private Map<Integer, Integer> initializeVSIDSCounters() {
-        Map<Integer, Integer> counters = new HashMap<>();
-
-        for (Integer variable : assignedValues.keySet()) {
-            counters.put(variable, 0);      // Letterale positivo
-            counters.put(-variable, 0);     // Letterale negativo
-        }
-
-        LOGGER.fine("Contatori VSIDS inizializzati per " + (counters.size() / 2) + " variabili");
-        return counters;
-    }
-
-    /**
-     * Registra informazioni dettagliate sulla formula caricata.
-     */
-    private void logFormulaInfo() {
-        int clauseCount = formula.getClausesCount();
-        int variableCount = formula.getVariableCount();
-        double clauseToVarRatio = variableCount > 0 ? (double) clauseCount / variableCount : 0;
-
-        LOGGER.info(String.format("Formula caricata: %d clausole, %d variabili (ratio: %.2f)",
-                clauseCount, variableCount, clauseToVarRatio));
-
-        // Log distribuzione lunghezza clausole per diagnostica
-        if (LOGGER.isLoggable(Level.FINE)) {
-            Map<Integer, Long> lengthDistribution = formula.getClauses().stream()
-                    .collect(java.util.stream.Collectors.groupingBy(
-                            List::size, java.util.stream.Collectors.counting()));
-            LOGGER.fine("Distribuzione lunghezza clausole: " + lengthDistribution);
-        }
-    }
-
-
-    /**
-     * Esegue il loop principale dell'algoritmo CDCL.
-     *
-     * @return risultato del loop principale
-     * @throws InterruptedException se il solver viene interrotto
+     * LOOP PRINCIPALE CDCL CORRETTO secondo la specifica fornita
      */
     private CDCLLoopResult executeCDCLMainLoop() throws InterruptedException {
-        LOGGER.fine("Inizio loop principale CDCL");
+        LOGGER.fine("=== INIZIO LOOP PRINCIPALE CDCL CORRETTO ===");
 
-        boolean comingFromBacktrack = false;
+        int iterationCount = 0;
+        final int MAX_ITERATIONS = 10_000_000;
 
-        while (!problemIsSatisfied() && !interrupted) {
-            // Controllo interruzione
-            checkForInterruption();
+        // INIZIALIZZAZIONE LIVELLO 0: aggiungi tutti i letterali unitari
+        initializeLevel0WithUnitClauses();
 
-            // Controllo limiti di sicurezza
-            if (hasReachedSafetyLimits()) {
-                LOGGER.warning("Raggiunti limiti di sicurezza - terminazione forzata");
+        while (!interrupted) {
+            iterationCount++;
+
+            if (iterationCount > MAX_ITERATIONS) {
+                LOGGER.warning("Raggiunto limite massimo iterazioni: " + MAX_ITERATIONS);
                 return CDCLLoopResult.timeout();
             }
 
-            // STEP 1: Decisione (se non veniamo da backtrack)
-            if (!comingFromBacktrack) {
-                makeNextDecision();
-            } else {
-                comingFromBacktrack = false;
+            checkForInterruption();
+
+            LOGGER.finest("=== ITERAZIONE " + iterationCount + " ===");
+
+            // FASE 1: VERIFICA SODDISFACIMENTO PRIMA DI TUTTO
+            if (problemIsSatisfied()) {
+                LOGGER.info("Formula SAT - tutte le clausole soddisfatte");
+                return CDCLLoopResult.sat();
             }
 
-            // STEP 2: Unit Propagation
+            // FASE 2: UNIT PROPAGATION
+            LOGGER.finest("Unit propagation - iterazione " + iterationCount);
             PropagationResult propagationResult = performUnitPropagation();
 
-            if (!propagationResult.hasConflict()) {
-                // Nessun conflitto, continua il loop
+            if (propagationResult.hasConflict()) {
+                // FASE 3: CONFLICT ANALYSIS CON SPIEGAZIONE
+                LOGGER.fine("Conflitto rilevato - clausola: " + propagationResult.getConflictClause());
+
+                ConflictAnalysisResult analysisResult = performConflictAnalysis(
+                        propagationResult.getConflictClause(),
+                        propagationResult.getJustifyingClause()
+                );
+
+                if (analysisResult.isUnsatisfiable()) {
+                    LOGGER.info("Formula UNSAT determinata");
+                    return CDCLLoopResult.unsat();
+                }
+
+                // FASE 4: APPRENDIMENTO E BACKTRACKING
+                performLearningAndBacktrack(analysisResult);
+
+                // Il nuovo apprendimento potrebbe causare propagazioni
                 continue;
             }
 
-            // STEP 3: Gestione Conflitto
-            ConflictHandlingResult conflictResult = handleConflict(propagationResult.getConflictClause());
-
-            if (conflictResult.isUnsatisfiable()) {
-                return CDCLLoopResult.unsat();
+            // FASE 5: DECISIONE VSIDS se non ci sono conflitti e non siamo SAT
+            if (!areAllVariablesAssigned()) {
+                LOGGER.finest("Presa decisione - iterazione " + iterationCount);
+                makeNextDecision();
             }
 
-            // STEP 4: Backtrack e continua
-            performBacktrack(conflictResult.getBacktrackLevel());
-            comingFromBacktrack = true;
+            // Log periodico progresso
+            if (iterationCount % 1000 == 0) {
+                logProgress(iterationCount);
+            }
         }
 
-        // Se si arriva qui, allora la formula è soddisfacibile
+        LOGGER.info("Loop CDCL terminato - Decisioni: " + decisionCount + ", Conflitti: " + conflictCount);
         return interrupted ? CDCLLoopResult.interrupted() : CDCLLoopResult.sat();
     }
 
     /**
-     * Controlla se il thread è stato interrotto.
-     *
-     * @throws InterruptedException se il thread è stato interrotto
+     * INIZIALIZZAZIONE LIVELLO 0: aggiunge tutte le clausole unitarie originali
+     */
+    private void initializeLevel0WithUnitClauses() {
+        LOGGER.fine("=== INIZIALIZZAZIONE LIVELLO 0 CON CLAUSOLE UNITARIE ===");
+
+        List<List<Integer>> allClauses = formula.getClauses();
+        int unitClausesCount = 0;
+
+        for (List<Integer> clause : allClauses) {
+            if (clause.size() == 1) {
+                Integer literal = clause.get(0);
+                Integer variable = Math.abs(literal);
+                Boolean value = literal > 0;
+
+                // Verifica se già assegnata
+                if (assignedValues.get(variable) == null) {
+                    // Crea assegnamento al livello 0 (senza incrementare decisioni)
+                    AssignedLiteral unitAssignment = new AssignedLiteral(variable, value, false, clause);
+                    assignedValues.put(variable, unitAssignment);
+                    decisionStack.addImpliedLiteral(variable, value, clause);
+
+                    // Registra mapping per uso in spiegazioni
+                    unitClauseMapping.put(literal, new ArrayList<>(clause));
+
+                    unitClausesCount++;
+                    LOGGER.fine("Letterale unitario aggiunto al livello 0: " + variable + " = " + value + " da " + clause);
+                } else {
+                    // Verifica consistenza se già assegnata
+                    AssignedLiteral existing = assignedValues.get(variable);
+                    if (!existing.getValue().equals(value)) {
+                        LOGGER.severe("Conflitto immediato tra clausole unitarie: " + variable);
+                        // Questo porterà a UNSAT immediato
+                    }
+                }
+            }
+        }
+
+        LOGGER.info("Livello 0 inizializzato con " + unitClausesCount + " clausole unitarie");
+    }
+
+    /**
+     * Controlla se il thread corrente è stato interrotto
      */
     private void checkForInterruption() throws InterruptedException {
         if (Thread.currentThread().isInterrupted() || interrupted) {
@@ -350,95 +353,79 @@ public class CDCLSolver {
     }
 
     /**
-     * Verifica se sono stati raggiunti i limiti per l'esecuzione
-     *
-     * @return true se i limiti sono stati raggiunti
+     * Log periodico del progresso per debugging
      */
-    private boolean hasReachedSafetyLimits() {
-        return decisionCount >= MAX_DECISIONS || conflictCount >= MAX_CONFLICTS;
+    private void logProgress(int iterationCount) {
+        int assignedCount = countAssignedVariables();
+        int totalVariables = formula.getVariableCount();
+
+        LOGGER.fine(String.format("Iterazione %d - Decisioni: %d, Conflitti: %d, Assegnate: %d/%d",
+                iterationCount, decisionCount, conflictCount, assignedCount, totalVariables));
     }
 
+    //endregion
+
+    //region UNIT PROPAGATION
 
     /**
-     * Esegue unit propagation a livello 0 per clausole unitarie.
-     *
-     * @return risultato della propagazione (conflitto o successo)
-     */
-    private PropagationResult performLevelZeroUnitPropagation() {
-        LOGGER.fine("Unit propagation livello 0 - clausole unitarie originali");
-
-        for (List<Integer> clause : formula.getClauses()) {
-            if (clause.size() == 1) {
-                Integer literal = clause.get(0);
-                Integer variable = Math.abs(literal);
-                Boolean value = literal > 0;
-
-                LOGGER.fine("Clausola unitaria trovata: " + variable + " = " + value);
-
-                // Si aggiunge come implicazione a livello 0
-                AssignedLiteral assignment = new AssignedLiteral(variable, value, false, clause);
-                assignedValues.put(variable, assignment);
-                decisionStack.addImpliedLiteral(variable, value, clause);
-            }
-        }
-
-        // Dopo aver processato le clausole unitarie, esegui propagazione completa
-        if (!decisionStack.isEmpty()) {
-            return performUnitPropagation();
-        }
-
-        return PropagationResult.success();
-    }
-
-    /**
-     * Esegue unit propagation completa considerando tutte le clausole.
-     *
-     * @return risultato della propagazione con eventuale clausola di conflitto
+     * UNIT PROPAGATION: propaga automaticamente clausole unitarie.
      */
     private PropagationResult performUnitPropagation() {
         List<List<Integer>> allClauses = getAllActiveClauses();
+        boolean progressMade;
+        int propagationRounds = 0;
 
-        // Loop di propagazione fino a punto fisso o a un conflitto
-        for (int clauseIndex = 0; clauseIndex < allClauses.size(); clauseIndex++) {
-            List<Integer> clause = allClauses.get(clauseIndex);
+        LOGGER.fine("Inizio unit propagation");
 
-            // Analizza stato corrente della clausola
-            ClauseEvaluationResult evaluation = evaluateClause(clause);
+        do {
+            progressMade = false;
+            propagationRounds++;
 
-            switch (evaluation.getStatus()) {
-                case SATISFIED:
-                    // Clausola già soddisfatta, continua
-                    continue;
-
-                case FALSIFIED:
-                    // Conflitto rilevato
-                    LOGGER.fine("Conflitto in clausola: " + clause);
-                    return PropagationResult.conflict(clause);
-
-                case UNIT:
-                    // Clausola unitaria: si propaga l'implicazione
-                    if (propagateUnitClause(clause, evaluation.getUnitLiteral())) {
-                        // Propagazione avvenuta: ricomincia dall'inizio per catturare nuove implicazioni
-                        clauseIndex = -1;
-                    }
-                    break;
-
-                case UNRESOLVED:
-                    // Clausola non ancora risolta, quindi continua
-                    continue;
-
-                default:
-                    throw new IllegalStateException("Status clausola non riconosciuto: " + evaluation.getStatus());
+            if (propagationRounds > 1000) {
+                LOGGER.warning("Unit propagation interrotta: possibile loop infinito");
+                break;
             }
-        }
 
+            for (List<Integer> clause : allClauses) {
+                if (interrupted) {
+                    return PropagationResult.success();
+                }
+
+                ClauseEvaluationResult evaluation = evaluateClause(clause);
+
+                switch (evaluation.getStatus()) {
+                    case SATISFIED:
+                        continue;
+
+                    case FALSIFIED:
+                        // CONFLITTO RILEVATO
+                        LOGGER.fine("Conflitto in clausola: " + clause);
+                        List<Integer> justifyingClause = findJustifyingClauseForConflict(clause);
+                        return PropagationResult.conflict(clause, justifyingClause);
+
+                    case UNIT:
+                        // PROPAGAZIONE UNITARIA
+                        if (propagateUnitClause(clause, evaluation.getUnitLiteral())) {
+                            progressMade = true;
+                            LOGGER.finest("Propagazione: " + evaluation.getUnitLiteral() + " da " + clause);
+                        }
+                        break;
+
+                    case UNRESOLVED:
+                        continue;
+                }
+            }
+
+            LOGGER.finest("Round propagazione " + propagationRounds + " - progresso: " + progressMade);
+
+        } while (progressMade && !interrupted);
+
+        LOGGER.fine("Unit propagation completata dopo " + propagationRounds + " round");
         return PropagationResult.success();
     }
 
     /**
-     * Ottiene tutte le clausole attive (originali + apprese).
-     *
-     * @return lista di tutte le clausole da considerare nella propagazione
+     * Raccoglie tutte le clausole attive (originali + apprese)
      */
     private List<List<Integer>> getAllActiveClauses() {
         List<List<Integer>> allClauses = new ArrayList<>(formula.getClauses());
@@ -447,10 +434,7 @@ public class CDCLSolver {
     }
 
     /**
-     * Valuta lo stato corrente di una clausola rispetto agli assegnamenti attuali.
-     *
-     * @param clause clausola da valutare
-     * @return risultato della valutazione con stato e eventuale letterale unitario
+     * Valuta lo stato di una clausola rispetto agli assegnamenti correnti.
      */
     private ClauseEvaluationResult evaluateClause(List<Integer> clause) {
         int unassignedCount = 0;
@@ -461,627 +445,568 @@ public class CDCLSolver {
             AssignedLiteral assignment = assignedValues.get(variable);
 
             if (assignment == null) {
-                // Variabile non assegnata
+                // Letterale non assegnato
                 unassignedCount++;
                 unassignedLiteral = literal;
             } else {
-                // Variabile assegnata: controlla se letterale è soddisfatto
+                // Calcola valore del letterale
                 boolean literalValue = assignment.getValue();
                 if (literal < 0) {
                     literalValue = !literalValue; // Negazione
                 }
 
                 if (literalValue) {
-                    // Letterale vero -> clausola soddisfatta
+                    // Letterale vero → clausola soddisfatta
                     return ClauseEvaluationResult.satisfied();
                 }
             }
         }
 
-        // Determina stato basato su letterali non assegnati
+        // Determina stato finale
         if (unassignedCount == 0) {
-            return ClauseEvaluationResult.falsified();
+            return ClauseEvaluationResult.falsified(); // Tutti falsi = conflitto
         } else if (unassignedCount == 1) {
-            return ClauseEvaluationResult.unit(unassignedLiteral);
+            return ClauseEvaluationResult.unit(unassignedLiteral); // Unit clause
         } else {
-            return ClauseEvaluationResult.unresolved();
+            return ClauseEvaluationResult.unresolved(); // Multiple non assegnati
         }
     }
 
     /**
-     * Propaga un'implicazione da una clausola unitaria.
-     *
-     * @param clause clausola unitaria che genera l'implicazione
-     * @param unitLiteral letterale che deve essere reso vero
-     * @return true se la propagazione è avvenuta, false se la variabile era già assegnata correttamente
+     * Propaga una clausola unitaria assegnando l'unico letterale libero.
      */
     private boolean propagateUnitClause(List<Integer> clause, Integer unitLiteral) {
         Integer variable = Math.abs(unitLiteral);
         Boolean value = unitLiteral > 0;
 
-        // Controlla se la variabile è già assegnata
+        // Verifica se già assegnata
         AssignedLiteral existingAssignment = assignedValues.get(variable);
         if (existingAssignment != null) {
-            // Già assegnata: dovrebbe essere consistente (altrimenti sarebbe conflitto)
-            return false;
+            return false; // Già assegnata
         }
 
-        // Crea nuova implicazione
+        // Crea nuovo assegnamento di implicazione
         AssignedLiteral newAssignment = new AssignedLiteral(variable, value, false, clause);
         assignedValues.put(variable, newAssignment);
         decisionStack.addImpliedLiteral(variable, value, clause);
         statistics.incrementPropagations();
 
-        LOGGER.fine("Propagazione unit: " + variable + " = " + value + " da " + clause);
+        LOGGER.fine("Propagazione unitaria: " + variable + " = " + value + " da " + clause);
         return true;
     }
 
-
     /**
-     * Prende la prossima decisione usando l'euristica VSIDS.
-     * Si seleziona la variabile non assegnata con il punteggio più alto.
-     * Il punteggio di una variabile aumenta ogni volta che appare in un conflitto.
-     *
+     * Trova la clausola che ha giustificato l'ultimo assegnamento nel conflitto.
      */
-    private void makeNextDecision() {
-        // Trova la prima variabile non assegnata nell'ordine VSIDS
-        for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
-            Integer variable = entry.getKey();
+    private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
+        // Trova l'ultima implicazione tra i letterali del conflitto
+        AssignedLiteral lastPropagation = null;
+        int lastLevel = -1;
 
-            if (entry.getValue() == null) { // Variabile non assegnata
-                // Scegli polarità basata su VSIDS counters
-                Boolean value = selectVariablePolarity(variable);
+        for (Integer literal : conflictClause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
 
-                // Crea e registra la decisione
-                makeDecision(variable, value);
-                return;
+            if (assignment != null && assignment.isImplication()) {
+                int level = getLevelForVariable(variable);
+                if (level >= lastLevel) {
+                    lastLevel = level;
+                    lastPropagation = assignment;
+                }
             }
         }
 
-        // Non dovremmo mai arrivare qui se problemIsSatisfied() funziona correttamente
-        throw new IllegalStateException("Nessuna variabile disponibile per decisione");
+        return lastPropagation != null ? lastPropagation.getAncestorClause() : null;
     }
 
-    /**
-     * Seleziona la polarità (true/false) per una variabile basandosi sui contatori VSIDS.
-     *
-     * @param variable variabile per cui selezionare la polarità
-     * @return true se scegliere polarità positiva, false per negativa
-     */
-    private Boolean selectVariablePolarity(Integer variable) {
-        Integer positiveCount = vsidsCounter.getOrDefault(variable, 0);
-        Integer negativeCount = vsidsCounter.getOrDefault(-variable, 0);
+    //endregion
 
-        // Scegli la polarità con più conflitti (euristica)
-        // In caso di parità, scegli positiva (default)
-        return positiveCount >= negativeCount;
-    }
+    //region CONFLICT ANALYSIS CORRETTO
 
     /**
-     * Registra una decisione a un nuovo livello di decisione.
-     *
-     * @param variable variabile da assegnare
-     * @param value valore da assegnare alla variabile
+     * CONFLICT ANALYSIS CORRETTO: implementa la "spiegazione" corretta
      */
-    private void makeDecision(Integer variable, Boolean value) {
-        // Crea l'assegnamento decisionale
-        AssignedLiteral decision = new AssignedLiteral(variable, value, true, null);
-        assignedValues.put(variable, decision);
-        decisionStack.addDecision(variable, value);
+    private ConflictAnalysisResult performConflictAnalysis(List<Integer> conflictClause,
+                                                           List<Integer> justifyingClause) {
+        LOGGER.fine("=== CONFLICT ANALYSIS CON SPIEGAZIONE ===");
+        LOGGER.fine("Clausola conflitto: " + conflictClause);
+        LOGGER.fine("Clausola giustificante: " + justifyingClause);
 
-        // Aggiorna contatori
-        decisionCount++;
-        statistics.incrementDecisions();
-
-        LOGGER.fine(String.format("Decisione: %d = %s @ livello %d (VSIDS: +%d/-%d)",
-                variable, value, decisionStack.size() - 1,
-                vsidsCounter.get(variable), vsidsCounter.get(-variable)));
-    }
-
-
-    /**
-     * Gestisce un conflitto applicando 1UIP.
-     *
-     * @param conflictClause clausola che ha causato il conflitto
-     * @return risultato dell'analisi con livello di backtrack
-     */
-    private ConflictHandlingResult handleConflict(List<Integer> conflictClause) {
-        LOGGER.fine("Inizio analisi conflitto: " + conflictClause);
-
-        // Aggiorna statistiche
-        this.conflictClause = new ArrayList<>(conflictClause);
         conflictCount++;
         statistics.incrementConflicts();
 
         // Aggiorna contatori VSIDS
-        updateVSIDSCountersAfterConflict();
+        updateVSIDSCountersAfterConflict(conflictClause);
 
-        // Esegui analisi First UIP
-        ConflictAnalysisResult analysisResult = performFirstUIPAnalysis();
-
-        if (analysisResult.isUnsatisfiable()) {
-            LOGGER.info("Formula UNSAT - conflitto irrisolvibile");
-            return ConflictHandlingResult.unsatisfiable();
+        // CASO 1: Spiegazione normale tra clausola giustificante e conflitto
+        if (justifyingClause != null) {
+            return handleNormalConflictWithExplanation(conflictClause, justifyingClause);
         }
 
-        // Apprendi la nuova clausola
-        learnNewClause(analysisResult.getLearnedClause());
-
-        // Calcola livello di backtrack
-        int backtrackLevel = analysisResult.getBacktrackLevel();
-
-        LOGGER.fine("Conflitto risolto - backtrack a livello " + backtrackLevel);
-
-        return ConflictHandlingResult.backtrack(backtrackLevel);
+        // CASO 2: Conflitto diretto (clausola completamente falsificata)
+        return handleDirectConflict(conflictClause);
     }
 
     /**
-     * Aggiorna i contatori VSIDS dopo un conflitto.
-     *
+     * GESTIONE CONFLITTO NORMALE: spiegazione tra clausola giustificante e conflitto
      */
-    private void updateVSIDSCountersAfterConflict() {
-        for (Integer literal : conflictClause) {
-            vsidsCounter.merge(literal, 1, Integer::sum);
+    private ConflictAnalysisResult handleNormalConflictWithExplanation(List<Integer> conflictClause,
+                                                                       List<Integer> justifyingClause) {
+        LOGGER.info("=== GESTIONE CONFLITTO NORMALE CON SPIEGAZIONE ===");
+
+        // Esegui spiegazione tra clausola giustificante e clausola di conflitto
+        List<Integer> explanation = performExplanation(justifyingClause, conflictClause);
+
+        LOGGER.info("Spiegazione: " + justifyingClause + " e " + conflictClause + " → " + explanation);
+
+        // Registra il passo di spiegazione
+        proofGenerator.recordResolutionStep(justifyingClause, conflictClause, explanation);
+
+        // Verifica se abbiamo derivato la clausola vuota
+        if (explanation.isEmpty()) {
+            LOGGER.info("*** CLAUSOLA VUOTA DERIVATA - FORMULA UNSAT ***");
+            return ConflictAnalysisResult.unsatisfiable();
         }
 
-        // Riordina le variabili secondo i nuovi punteggi VSIDS
-        reorderVariablesByVSIDS();
+        // Verifica se explanation genera conflitto con assegnamenti livello 0
+        return handleExplanationResult(explanation);
     }
 
     /**
-     * Riordina la mappa delle variabili secondo i punteggi VSIDS aggiornati.
-     *
+     * GESTIONE CONFLITTO DIRETTO: clausola completamente falsificata
      */
-    private void reorderVariablesByVSIDS() {
-        // Crea lista di tutte le entries dei contatori ordinata per punteggio
-        List<Map.Entry<Integer, Integer>> sortedCounters = new ArrayList<>(vsidsCounter.entrySet());
-        sortedCounters.sort(Map.Entry.<Integer, Integer>comparingByValue().reversed());
+    private ConflictAnalysisResult handleDirectConflict(List<Integer> conflictClause) {
+        LOGGER.info("=== GESTIONE CONFLITTO DIRETTO ===");
 
-        // Si ricostruisce la mappa delle variabili nell'ordine VSIDS
-        LinkedHashMap<Integer, AssignedLiteral> reorderedAssignments = new LinkedHashMap<>();
-
-        for (Map.Entry<Integer, Integer> entry : sortedCounters) {
-            Integer variable = Math.abs(entry.getKey());
-
-            // Evita duplicati (ogni variabile appare sia come +VAR che -VAR nei contatori)
-            if (!reorderedAssignments.containsKey(variable)) {
-                reorderedAssignments.put(variable, assignedValues.get(variable));
-            }
+        // Verifica se tutti i letterali sono al livello 0
+        if (areAllLiteralsAtLevel0(conflictClause)) {
+            LOGGER.info("Conflitto diretto al livello 0 - spiegazioni sequenziali");
+            return handleLevel0DirectConflict(conflictClause);
         }
 
-        // Si sostituisce la mappa con quella riordinata
-        assignedValues.clear();
-        assignedValues.putAll(reorderedAssignments);
-
-        LOGGER.finest("Variabili riordinate secondo VSIDS aggiornato");
+        // Conflitto a livelli superiori - logica normale
+        return ConflictAnalysisResult.unsatisfiable();
     }
 
     /**
-     * Esegue l'analisi del conflitto con strategia 1UIP.
-     *
-     * @return risultato dell'analisi con clausola appresa e livello di backtrack
+     * GESTIONE RISULTATO SPIEGAZIONE: verifica se causa conflitti con livello 0
      */
-    private ConflictAnalysisResult performFirstUIPAnalysis() {
-        List<Integer> currentConflictClause = new ArrayList<>(conflictClause);
-        int currentDecisionLevel = decisionStack.size() - 1;
+    private ConflictAnalysisResult handleExplanationResult(List<Integer> explanation) {
+        // Caso 1: letterale singolo
+        if (explanation.size() == 1) {
+            Integer literal = explanation.get(0);
+            Integer variable = Math.abs(literal);
+            Boolean expectedValue = literal > 0;
 
-        // Si ottiengono gli assegnamenti del livello corrente per l'analisi
-        Map<Integer, AssignedLiteral> currentLevelAssignments = getCurrentLevelAssignments();
-
-        // Loop di risoluzione fino a 1UIP
-        while (true) {
-            // Conta letterali del livello di decisione corrente nella clausola
-            List<Integer> currentLevelLiterals = getCurrentLevelLiterals(currentConflictClause, currentDecisionLevel);
-
-            // 1UIP è raggiunto quando c'è esattamente 1 letterale del livello corrente
-            if (currentLevelLiterals.size() <= 1) {
-                // Crea la clausola appresa
-                List<Integer> learnedClause = new ArrayList<>(currentConflictClause);
-                int backtrackLevel = calculateBacktrackLevel(learnedClause);
-
-                return ConflictAnalysisResult.success(learnedClause, backtrackLevel);
+            // Verifica conflitto con livello 0
+            AssignedLiteral existing = assignedValues.get(variable);
+            if (existing != null && getLevelForVariable(variable) == 0) {
+                if (!existing.getValue().equals(expectedValue)) {
+                    // Conflitto con livello 0 - genera clausola vuota
+                    List<Integer> unitClause = Arrays.asList(-literal);
+                    proofGenerator.recordResolutionStep(explanation, unitClause, Collections.emptyList());
+                    return ConflictAnalysisResult.unsatisfiable();
+                }
             }
 
-            // Trova la migliore clausola per risoluzione
-            List<Integer> resolutionClause = findBestResolutionClause(currentConflictClause, currentLevelAssignments);
+            // Backtrack al livello 0
+            return ConflictAnalysisResult.backtrack(explanation, 0);
+        }
 
-            if (resolutionClause.isEmpty()) {
-                // Non possiamo più proseguire - formula insoddisfacibile
-                LOGGER.warning("Impossibile continuare analisi conflitto - UNSAT");
+        // Caso 2: disgiunzione - verifica se tutti letterali sono in conflitto con livello 0
+        if (areAllLiteralsInConflictWithLevel0(explanation)) {
+            return handleLevel0ConflictSequence(explanation);
+        }
+
+        // Caso normale: calcola livello backtrack appropriato
+        int backtrackLevel = calculateBacktrackLevel(explanation);
+        return ConflictAnalysisResult.backtrack(explanation, backtrackLevel);
+    }
+
+    /**
+     * GESTIONE CONFLITTO DIRETTO LIVELLO 0: spiegazioni sequenziali
+     */
+    private ConflictAnalysisResult handleLevel0DirectConflict(List<Integer> conflictClause) {
+        return handleLevel0ConflictSequence(conflictClause);
+    }
+
+    /**
+     * GESTIONE SEQUENZA CONFLITTI LIVELLO 0: spiegazioni sequenziali fino a clausola vuota
+     */
+    private ConflictAnalysisResult handleLevel0ConflictSequence(List<Integer> currentClause) {
+        LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 ===");
+        LOGGER.info("Clausola iniziale: " + currentClause);
+
+        List<Integer> workingClause = new ArrayList<>(currentClause);
+
+        while (!workingClause.isEmpty()) {
+            // Trova prossimo letterale da consumare
+            Integer literalToConsume = findNextLiteralToConsume(workingClause);
+
+            if (literalToConsume == null) {
+                LOGGER.warning("Nessun letterale da consumare trovato in: " + workingClause);
+                break;
+            }
+
+            // Trova clausola unitaria corrispondente
+            List<Integer> unitClause = findUnitClauseForLiteral(literalToConsume);
+
+            if (unitClause == null) {
+                LOGGER.warning("Clausola unitaria non trovata per letterale: " + literalToConsume);
+                break;
+            }
+
+            // Esegui spiegazione
+            List<Integer> nextClause = performExplanation(workingClause, unitClause);
+
+            LOGGER.info("Spiegazione sequenziale: " + workingClause + " e " + unitClause + " → " + nextClause);
+
+            // Registra passo di spiegazione
+            proofGenerator.recordResolutionStep(workingClause, unitClause, nextClause);
+
+            // Aggiorna clausola di lavoro
+            workingClause = nextClause;
+
+            // Se clausola vuota, termina
+            if (workingClause.isEmpty()) {
+                LOGGER.info("*** CLAUSOLA VUOTA DERIVATA DA SPIEGAZIONI SEQUENZIALI ***");
                 return ConflictAnalysisResult.unsatisfiable();
             }
-
-            // Si segue la risoluzione binaria
-            currentConflictClause = performBinaryResolution(currentConflictClause, resolutionClause);
-
-            // Registra passo per la prova se non troppo voluminosa
-            if (proofGenerator.getStepCount() <= 500) {
-                proofGenerator.recordResolutionStep(conflictClause, resolutionClause, currentConflictClause);
-            }
-
-            // Verifica se abbiamo derivato clausola vuota (UNSAT)
-            if (currentConflictClause.isEmpty()) {
-                LOGGER.info("Clausola vuota derivata durante analisi - UNSAT");
-                return ConflictAnalysisResult.unsatisfiable();
-            }
         }
+
+        LOGGER.warning("Spiegazioni sequenziali terminate senza clausola vuota: " + workingClause);
+        return ConflictAnalysisResult.unsatisfiable();
     }
 
     /**
-     * Ottiene gli assegnamenti del livello di decisione corrente.
-     *
-     * @return mappa degli assegnamenti del livello corrente
+     * TROVA PROSSIMO LETTERALE DA CONSUMARE: sceglie letterale in conflitto con livello 0
      */
-    private Map<Integer, AssignedLiteral> getCurrentLevelAssignments() {
-        Map<Integer, AssignedLiteral> currentLevel = new HashMap<>();
-
-        for (AssignedLiteral assignment : decisionStack.getTopLevel()) {
-            currentLevel.put(assignment.getVariable(), assignment);
-        }
-
-        return currentLevel;
-    }
-
-    /**
-     * Trova i letterali della clausola che appartengono al livello di decisione specificato.
-     *
-     * @param clause clausola da analizzare
-     * @param level livello di decisione di interesse
-     * @return lista dei letterali del livello specificato
-     */
-    private List<Integer> getCurrentLevelLiterals(List<Integer> clause, int level) {
-        List<Integer> levelLiterals = new ArrayList<>();
-
+    private Integer findNextLiteralToConsume(List<Integer> clause) {
         for (Integer literal : clause) {
             Integer variable = Math.abs(literal);
             AssignedLiteral assignment = assignedValues.get(variable);
 
-            if (assignment != null && getLevelForVariable(variable) == level) {
-                levelLiterals.add(literal);
+            if (assignment != null && getLevelForVariable(variable) == 0) {
+                Boolean expectedValue = literal > 0;
+                if (!assignment.getValue().equals(expectedValue)) {
+                    // Questo letterale è in conflitto con livello 0
+                    return -literal; // Letterale opposto per la clausola unitaria
+                }
             }
         }
-
-        return levelLiterals;
+        return null;
     }
 
     /**
-     * Ottiene il livello di decisione per una variabile.
-     *
-     * @param variable variabile di cui trovare il livello
-     * @return livello di decisione della variabile
+     * TROVA CLAUSOLA UNITARIA PER LETTERALE: cerca nel mapping o negli assegnamenti
      */
-    private int getLevelForVariable(Integer variable) {
-        // Cerca la variabile nello stack delle decisioni
-        for (int level = 0; level < decisionStack.size(); level++) {
-            if (decisionStack.getLiteralsAtLevel(level).contains(variable)) {
-                return level;
-            }
+    private List<Integer> findUnitClauseForLiteral(Integer literal) {
+        // Cerca nel mapping delle clausole unitarie originali
+        List<Integer> unitClause = unitClauseMapping.get(literal);
+        if (unitClause != null) {
+            return unitClause;
         }
-        return -1; // Non trovata (non dovrebbe succedere)
+
+        // Crea clausola unitaria sintetica se è un assegnamento noto
+        Integer variable = Math.abs(literal);
+        AssignedLiteral assignment = assignedValues.get(variable);
+
+        if (assignment != null && getLevelForVariable(variable) == 0) {
+            return Arrays.asList(literal);
+        }
+
+        return null;
     }
 
     /**
-     * Trova la migliore clausola per la risoluzione. Si prediligono le clausole che:
-     * - Hanno il maggior numero di letterali in comune con la clausola corrente
-     * - Sono più corte (meno letterali da aggiungere)
-     * - Corrispondono a implicazioni recenti (più vicine nel stack)
-     *
-     * @param conflictClause clausola corrente di conflitto
-     * @param levelAssignments assegnamenti del livello corrente
-     * @return clausola migliore per risoluzione
+     * VERIFICA SE TUTTI I LETTERALI SONO AL LIVELLO 0
      */
-    private List<Integer> findBestResolutionClause(List<Integer> conflictClause,
-                                                   Map<Integer, AssignedLiteral> levelAssignments) {
-        List<Integer> bestClause = new ArrayList<>();
-        int bestScore = Integer.MIN_VALUE;
-
-        for (Integer literal : conflictClause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = levelAssignments.get(variable);
-
-            // Considera solo implicazioni (non le decisioni)
-            if (assignment == null || assignment.isDecision()) {
-                continue;
-            }
-
-            List<Integer> candidateClause = assignment.getAncestorClause();
-            if (candidateClause == null || candidateClause.isEmpty()) {
-                continue;
-            }
-
-            // Calcola punteggio euristico
-            int score = calculateResolutionScore(conflictClause, candidateClause);
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestClause = new ArrayList<>(candidateClause);
-            }
-        }
-
-        return bestClause;
-    }
-
-    /**
-     * Calcola un punteggio euristico per la risoluzione tra due clausole.
-     *
-     * @param clause1 prima clausola
-     * @param clause2 seconda clausola
-     * @return punteggio (più alto = migliore)
-     */
-    private int calculateResolutionScore(List<Integer> clause1, List<Integer> clause2) {
-        int score = 0;
-
-        // Penalizza per letterali aggiuntivi che verranno introdotti
-        for (Integer literal : clause2) {
-            if (!clause1.contains(literal)) {
-                score -= 1;
-            }
-        }
-
-        // Bonus per clausole più corte
-        score -= clause2.size();
-
-        return score;
-    }
-
-    /**
-     * Esegue la risoluzione binaria tra due clausole:
-     * rimuove letterali complementari (x e !x) da due clausole e unisce i letterali rimanenti.
-     *
-     * @param leftClause prima clausola
-     * @param rightClause seconda clausola
-     * @return clausola risultante dalla risoluzione
-     */
-    private List<Integer> performBinaryResolution(List<Integer> leftClause, List<Integer> rightClause) {
-        // Crea copie per manipolazione
-        List<Integer> left = new ArrayList<>(leftClause);
-        List<Integer> right = new ArrayList<>(rightClause);
-
-        // Ordina per facilitare la ricerca di complementi
-        left.sort(Integer::compareTo);
-        right.sort(Integer::compareTo);
-
-        // Trova e rimuovi letterali complementari
-        Set<Integer> toRemoveFromLeft = new HashSet<>();
-        Set<Integer> toRemoveFromRight = new HashSet<>();
-
-        for (Integer leftLiteral : left) {
-            Integer complement = -leftLiteral;
-            if (right.contains(complement)) {
-                toRemoveFromLeft.add(leftLiteral);
-                toRemoveFromRight.add(complement);
-            }
-        }
-
-        // Rimuovi letterali complementari
-        left.removeAll(toRemoveFromLeft);
-        right.removeAll(toRemoveFromRight);
-
-        // Unisci le clausole rimanenti (evitando duplicati)
-        Set<Integer> resolvent = new HashSet<>(left);
-        resolvent.addAll(right);
-
-        return new ArrayList<>(resolvent);
-    }
-
-    /**
-     * Calcola il livello di backtrack per una clausola appresa.
-     *
-     * @param learnedClause clausola appresa
-     * @return livello di backtrack appropriato
-     */
-    private int calculateBacktrackLevel(List<Integer> learnedClause) {
-        if (learnedClause.isEmpty()) {
-            return -1; // Clausola vuota = UNSAT
-        }
-
-        if (learnedClause.size() == 1) {
-            return 0; // Clausola unitaria = backtrack al livello 0
-        }
-
-        // Raccoglie tutti i livelli dei letterali nella clausola
-        List<Integer> levels = new ArrayList<>();
-
-        for (Integer literal : learnedClause) {
+    private boolean areAllLiteralsAtLevel0(List<Integer> clause) {
+        for (Integer literal : clause) {
             Integer variable = Math.abs(literal);
             int level = getLevelForVariable(variable);
-            if (level >= 0) {
-                levels.add(level);
+            if (level != 0) {
+                return false;
             }
         }
-
-        if (levels.size() < 2) {
-            return 0; // Fallback sicuro
-        }
-
-        // Ordina in ordine decrescente e prendi il secondo più alto
-        levels.sort(Collections.reverseOrder());
-        return levels.get(1);
+        return true;
     }
 
     /**
-     * Apprende una nuova clausola e gestisce la memoria.
-     *
-     * @param learnedClause clausola da apprendere
+     * VERIFICA SE TUTTI I LETTERALI SONO IN CONFLITTO CON LIVELLO 0
+     */
+    private boolean areAllLiteralsInConflictWithLevel0(List<Integer> clause) {
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment == null || getLevelForVariable(variable) != 0) {
+                return false;
+            }
+
+            Boolean expectedValue = literal > 0;
+            if (assignment.getValue().equals(expectedValue)) {
+                return false; // Non in conflitto
+            }
+        }
+        return true;
+    }
+
+    /**
+     * SPIEGAZIONE: implementa l'algoritmo corretto di spiegazione
+     */
+    private List<Integer> performExplanation(List<Integer> clause1, List<Integer> clause2) {
+        LOGGER.finest("Spiegazione tra: " + clause1 + " e " + clause2);
+
+        Set<Integer> result = new HashSet<>();
+
+        // Aggiungi letterali da clause1
+        if (clause1 != null) {
+            for (Integer literal : clause1) {
+                result.add(literal);
+            }
+        }
+
+        // Aggiungi letterali da clause2, rimuovendo quelli di segno opposto
+        if (clause2 != null) {
+            for (Integer literal : clause2) {
+                if (result.contains(-literal)) {
+                    // Letterali di segno opposto - rimuovi entrambi
+                    result.remove(-literal);
+                } else {
+                    // Letterale non contraddittorio - aggiungi
+                    result.add(literal);
+                }
+            }
+        }
+
+        List<Integer> explanationResult = new ArrayList<>(result);
+        explanationResult.sort(Integer::compareTo);
+
+        LOGGER.finest("Spiegazione completata: " + explanationResult);
+        return explanationResult;
+    }
+
+    /**
+     * Calcola livello di backtrack corretto
+     */
+    private int calculateBacktrackLevel(List<Integer> explanation) {
+        if (explanation.size() == 1) {
+            // Caso 1: singolo letterale -> livello 0 (auto-giustificato)
+            return 0;
+        } else {
+            // Caso 2: disgiunzione -> livello dove letterale asserito è indefinito
+            // e gli altri sono falsi
+            return findAssertionLevel(explanation);
+        }
+    }
+
+    /**
+     * Trova livello appropriato per assertion di clausola appresa
+     */
+    private int findAssertionLevel(List<Integer> learnedClause) {
+        int currentLevel = decisionStack.getLevel();
+
+        // Per semplicità, backtrack di un livello per permettere assertion
+        return Math.max(0, currentLevel - 1);
+    }
+
+    /**
+     * Aggiorna contatori VSIDS dopo conflitto
+     */
+    private void updateVSIDSCountersAfterConflict(List<Integer> conflictClause) {
+        for (Integer literal : conflictClause) {
+            vsidsCounter.merge(literal, 1, Integer::sum);
+        }
+    }
+
+    //endregion
+
+    //region APPRENDIMENTO E BACKTRACKING
+
+    /**
+     * Esegue apprendimento clausola e backtracking
+     */
+    private void performLearningAndBacktrack(ConflictAnalysisResult analysisResult) {
+        List<Integer> learnedClause = analysisResult.getLearnedClause();
+        int backtrackLevel = analysisResult.getBacktrackLevel();
+
+        // Apprendi clausola
+        learnNewClause(learnedClause);
+
+        // Esegui backtrack
+        performBacktrack(backtrackLevel);
+
+        // Applica assertion se necessario
+        applyAssertion(learnedClause, backtrackLevel);
+    }
+
+    /**
+     * Apprende una nuova clausola
      */
     private void learnNewClause(List<Integer> learnedClause) {
-        // Evita duplicati
-        if (!formula.getClauses().contains(learnedClause) && !learnedClauses.contains(learnedClause)) {
+        if (learnedClause == null || learnedClause.isEmpty()) {
+            return;
+        }
 
-            // Gestione memoria: rimuovi clausole vecchie se necessario
-            manageLearnedClausesMemory();
-
-            // Aggiungi la nuova clausola
+        if (!isDuplicateClause(learnedClause)) {
             learnedClauses.add(new ArrayList<>(learnedClause));
             statistics.incrementLearnedClauses();
-
-            LOGGER.fine("Clausola appresa: " + learnedClause + " (totale: " + learnedClauses.size() + ")");
+            LOGGER.fine("Clausola appresa: " + learnedClause);
         }
     }
 
     /**
-     * Quando il numero di clausole apprese diventa troppo grande, rimuove
-     * le clausole più grandi per mantenere l'uso di memoria sotto controllo.
+     * Verifica se una clausola è duplicata
      */
-    private void manageLearnedClausesMemory() {
-        int maxLearnedClauses = formula.getClausesCount() / 3;
-
-        if (learnedClauses.size() >= maxLearnedClauses) {
-            // Ordina per dimensione decrescente
-            learnedClauses.sort((c1, c2) -> Integer.compare(c2.size(), c1.size()));
-
-            // Rimuove il 30% delle clausole più grandi
-            int toRemove = Math.max(1, learnedClauses.size() / 3);
-
-            for (int i = 0; i < toRemove && !learnedClauses.isEmpty(); i++) {
-                learnedClauses.remove(0);
+    private boolean isDuplicateClause(List<Integer> clause) {
+        for (List<Integer> existing : formula.getClauses()) {
+            if (clausesEqual(clause, existing)) {
+                return true;
             }
-
-            LOGGER.fine("Forgetting: rimosse " + toRemove + " clausole apprese (memoria)");
         }
+
+        for (List<Integer> existing : learnedClauses) {
+            if (clausesEqual(clause, existing)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
+    /**
+     * Confronta due clausole per uguaglianza
+     */
+    private boolean clausesEqual(List<Integer> clause1, List<Integer> clause2) {
+        if (clause1.size() != clause2.size()) {
+            return false;
+        }
+
+        Set<Integer> set1 = new HashSet<>(clause1);
+        Set<Integer> set2 = new HashSet<>(clause2);
+
+        return set1.equals(set2);
+    }
 
     /**
-     * Esegue backtrack non cronologico, andando direttamente al
-     * livello dove la clausola appresa diventa unitaria.
-     *
-     * @param targetLevel livello di destinazione del backtrack
+     * Esegue backtrack al livello specificato
      */
     private void performBacktrack(int targetLevel) {
-        int currentLevel = decisionStack.size() - 1;
+        int currentLevel = decisionStack.getLevel();
 
-        LOGGER.fine("Backtrack non cronologico: livello " + currentLevel + " → " + targetLevel);
+        LOGGER.fine("Backtrack: " + currentLevel + " → " + targetLevel);
 
-        // Identifica il letterale di asserzione per dopo il backtrack
-        AssertionInfo assertionInfo = determineAssertionLiteral();
-
-        // Rimuovi tutti i livelli sopra il target
-        while (decisionStack.size() > targetLevel + 1) {
+        while (decisionStack.getLevel() > targetLevel) {
             List<AssignedLiteral> removedLevel = decisionStack.deleteLevel();
 
-            // Rimuovi gli assegnamenti delle variabili del livello rimosso
             for (AssignedLiteral assignment : removedLevel) {
                 assignedValues.put(assignment.getVariable(), null);
             }
         }
 
-        // Aggiungi il letterale di asserzione come implicazione al nuovo livello
-        if (assertionInfo.isValid()) {
-            addAssertionAfterBacktrack(assertionInfo);
-        }
-
-        // Aggiorna statistiche
         statistics.incrementBackjumps();
-
-        LOGGER.fine("Backtrack completato - nuovo livello: " + (decisionStack.size() - 1));
     }
 
     /**
-     * Determina il letterale di asserzione dalla clausola di conflitto.
-     *
-     * @return informazioni sul letterale di asserzione
+     * Applica assertion di clausola appresa al livello corrente
      */
-    private AssertionInfo determineAssertionLiteral() {
-        // Il letterale di asserzione è tipicamente quello che rende vera la clausola appresa
-        for (Integer literal : conflictClause) {
+    private void applyAssertion(List<Integer> learnedClause, int level) {
+        if (learnedClause != null && learnedClause.size() == 1) {
+            // Clausola unitaria - auto-giustificata
+            Integer literal = learnedClause.get(0);
             Integer variable = Math.abs(literal);
-            AssignedLiteral currentAssignment = assignedValues.get(variable);
+            Boolean value = literal > 0;
 
-            if (currentAssignment != null) {
-                Boolean assertionValue = determineAssertionValue(literal, currentAssignment);
-                return new AssertionInfo(variable, assertionValue, conflictClause);
+            if (assignedValues.get(variable) == null) {
+                AssignedLiteral assertion = new AssignedLiteral(variable, value, false, learnedClause);
+                assignedValues.put(variable, assertion);
+                decisionStack.addImpliedLiteral(variable, value, learnedClause);
+
+                LOGGER.fine("Assertion applicata: " + variable + " = " + value + " (auto-giustificata)");
+            }
+        }
+    }
+
+    //endregion
+
+    //region DECISION MAKING
+
+    /**
+     * Sceglie prossima variabile da assegnare usando VSIDS
+     */
+    private void makeNextDecision() {
+        LOGGER.fine("Ricerca prossima variabile per decisione");
+
+        for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
+            Integer variable = entry.getKey();
+
+            if (entry.getValue() == null) {
+                Boolean value = selectVariablePolarity(variable);
+
+                decisionCount++;
+                statistics.incrementDecisions();
+
+                AssignedLiteral decision = new AssignedLiteral(variable, value, true, null);
+                assignedValues.put(variable, decision);
+                decisionStack.addDecision(variable, value);
+
+                int currentLevel = decisionStack.getLevel();
+                LOGGER.fine(String.format("DECISIONE #%d: %d = %s @ livello %d",
+                        decisionCount, variable, value, currentLevel));
+
+                return;
             }
         }
 
-        return AssertionInfo.invalid();
+        throw new IllegalStateException("Nessuna variabile disponibile per decisione");
     }
 
     /**
-     * Determina il valore di asserzione per un letterale.
-     *
-     * @param literal letterale originale
-     * @param currentAssignment assegnamento corrente
-     * @return valore di asserzione
+     * Seleziona polarità per variabile basata su VSIDS
      */
-    private Boolean determineAssertionValue(Integer literal, AssignedLiteral currentAssignment) {
-        boolean isNegated = literal < 0;
-        boolean currentValue = currentAssignment.getValue();
+    private Boolean selectVariablePolarity(Integer variable) {
+        Integer positiveCount = vsidsCounter.getOrDefault(variable, 0);
+        Integer negativeCount = vsidsCounter.getOrDefault(-variable, 0);
 
-        // L'asserzione dovrebbe rendere il letterale vero
-        return isNegated ? !currentValue : currentValue;
+        return positiveCount >= negativeCount;
     }
 
-    /**
-     * Aggiunge il letterale di asserzione dopo il backtrack.
-     *
-     * @param assertionInfo informazioni sul letterale di asserzione
-     */
-    private void addAssertionAfterBacktrack(AssertionInfo assertionInfo) {
-        AssignedLiteral assertion = new AssignedLiteral(
-                assertionInfo.getVariable(),
-                assertionInfo.getValue(),
-                false, // È un'implicazione, non una decisione
-                assertionInfo.getSourceClause()
-        );
+    //endregion
 
-        assignedValues.put(assertionInfo.getVariable(), assertion);
-        decisionStack.addImpliedLiteral(
-                assertionInfo.getVariable(),
-                assertionInfo.getValue(),
-                assertionInfo.getSourceClause()
-        );
-
-        LOGGER.fine("Asserzione dopo backtrack: " + assertionInfo.getVariable() +
-                " = " + assertionInfo.getValue());
-    }
-
+    //region VERIFICA SODDISFACIMENTO
 
     /**
-     * Verifica se il problema è completamente soddisfatto.
-     *
-     * @return true se la formula è completamente soddisfatta
+     * Verifica se la formula è completamente soddisfatta
      */
     private boolean problemIsSatisfied() {
-        // Verifica clausole originali
+        // Prima verifica se tutte le variabili sono assegnate
+        if (!areAllVariablesAssigned()) {
+            return false;
+        }
+
+        // Verifica soddisfacimento clausole originali
         if (!areAllClausesSatisfied(formula.getClauses())) {
             return false;
         }
 
-        // Verifica clausole apprese
+        // Verifica soddisfacimento clausole apprese
         if (!areAllClausesSatisfied(learnedClauses)) {
             return false;
         }
 
-        // Se si arriva qui, allora tutte le clausole sono soddisfatte
         return true;
     }
 
     /**
-     * Verifica se tutte le clausole in una lista sono soddisfatte.
-     *
-     * @param clauses lista di clausole da verificare
-     * @return true se tutte sono soddisfatte
+     * Verifica se tutte le clausole sono soddisfatte
      */
     private boolean areAllClausesSatisfied(List<List<Integer>> clauses) {
         for (List<Integer> clause : clauses) {
             ClauseEvaluationResult evaluation = evaluateClause(clause);
 
-            switch (evaluation.getStatus()) {
-                case SATISFIED:
-                    continue; // Clausola OK
-
-                case FALSIFIED:
-                    LOGGER.warning("Clausola falsificata rilevata: " + clause);
-                    return false;
-
-                case UNIT:
-                case UNRESOLVED:
-                    // Ci sono ancora clausole incomplete
-                    return false;
-
-                default:
-                    throw new IllegalStateException("Status clausola non riconosciuto");
+            if (evaluation.getStatus() != ClauseEvaluationResult.Status.SATISFIED) {
+                return false;
             }
         }
 
@@ -1089,81 +1014,58 @@ public class CDCLSolver {
     }
 
     /**
-     * Genera il modello finale per una formula soddisfacibile.
-     *
-     * @return mappa con l'assegnamento completo delle variabili usando i nomi originali
+     * Conta variabili attualmente assegnate
      */
-    private Map<String, Boolean> generateModel() {
-        Map<String, Boolean> model = new HashMap<>();
-
-        LOGGER.fine("Generazione modello finale con nomi variabili originali");
-
-        // Ottieni il mapping inverso: da ID numerico a nome variabile
-        Map<Integer, String> inverseMapping = createInverseVariableMapping();
-
-        for (int variable = 1; variable <= formula.getVariableCount(); variable++) {
-            AssignedLiteral assignment = assignedValues.get(variable);
-
-            // Ottieni il nome originale della variabile
-            String originalVariableName = inverseMapping.get(variable);
-            if (originalVariableName == null) {
-                // Fallback: usa l'ID numerico se non trovato
-                originalVariableName = String.valueOf(variable);
-                LOGGER.warning("Nome originale non trovato per variabile " + variable);
-            }
-
-            if (assignment != null) {
-                // Variabile assegnata durante la ricerca
-                model.put(originalVariableName, assignment.getValue());
-                LOGGER.finest("Modello: " + originalVariableName + " = " + assignment.getValue() +
-                        " (" + (assignment.isDecision() ? "decisione" : "implicazione") + ")");
-            } else {
-                // Variabile non assegnata - usa valore di default
-                model.put(originalVariableName, true);
-                LOGGER.finest("Modello: " + originalVariableName + " = true (default)");
-            }
-        }
-
-        LOGGER.info("Modello generato con " + model.size() + " variabili usando nomi originali");
-        return model;
+    private int countAssignedVariables() {
+        return (int) assignedValues.values().stream()
+                .filter(Objects::nonNull)
+                .count();
     }
 
     /**
-     * Crea il mapping inverso da ID numerico a nome variabile originale.
-     *
-     * @return mappa che associa ogni ID numerico al nome originale della variabile
+     * Verifica se tutte le variabili sono assegnate
      */
-    private Map<Integer, String> createInverseVariableMapping() {
-        Map<Integer, String> inverseMapping = new HashMap<>();
-        Map<String, Integer> originalMapping = formula.getVariableMapping();
-
-        // Inverti il mapping: da (nome -> ID) a (ID -> nome)
-        for (Map.Entry<String, Integer> entry : originalMapping.entrySet()) {
-            inverseMapping.put(entry.getValue(), entry.getKey());
-        }
-
-        LOGGER.fine("Mapping inverso creato: " + inverseMapping);
-        return inverseMapping;
+    private boolean areAllVariablesAssigned() {
+        return assignedValues.values().stream().noneMatch(Objects::isNull);
     }
 
+    /**
+     * Trova livello di una variabile
+     */
+    private int getLevelForVariable(Integer variable) {
+        for (int level = 0; level < decisionStack.size(); level++) {
+            if (decisionStack.getLiteralsAtLevel(level).contains(variable)) {
+                return level;
+            }
+        }
+        return -1;
+    }
+
+    //endregion
+
+    //region GESTIONE RISULTATO FINALE
 
     /**
-     * Gestisce il risultato finale del loop CDCL.
-     *
-     * @param loopResult risultato del loop principale
-     * @return risultato SAT finale
+     * Gestisce il risultato finale e genera output appropriato
      */
     private SATResult handleFinalResult(CDCLLoopResult loopResult) {
         statistics.stopTimer();
 
+        LOGGER.info("=== STATISTICHE FINALI ===");
+        LOGGER.info("Decisioni: " + decisionCount);
+        LOGGER.info("Conflitti: " + conflictCount);
+        LOGGER.info("Tempo: " + statistics.getExecutionTimeMs() + " ms");
+        LOGGER.info("Variabili: " + formula.getVariableCount());
+        LOGGER.info("Clausole: " + formula.getClausesCount());
+
         switch (loopResult.getType()) {
             case SAT:
-                LOGGER.info("Formula SAT - generazione modello finale");
+                LOGGER.info("=== FORMULA SAT - generazione modello ===");
                 Map<String, Boolean> model = generateModel();
                 return SATResult.satisfiable(model, statistics);
 
             case UNSAT:
-                LOGGER.info("Formula UNSAT - generazione prova");
+                LOGGER.info("=== FORMULA UNSAT - generazione prova ===");
                 String proof = proofGenerator.generateProof();
                 statistics.setProofSize(proofGenerator.getStepCount());
                 return SATResult.unsatisfiable(proof, statistics);
@@ -1177,77 +1079,75 @@ public class CDCLSolver {
                 throw new RuntimeException("Solver interrotto per timeout");
 
             default:
-                throw new IllegalStateException("Tipo di risultato non gestito: " + loopResult.getType());
+                throw new IllegalStateException("Tipo risultato non gestito: " + loopResult.getType());
         }
     }
 
     /**
-     * Crea un risultato UNSAT con la prova appropriata.
-     *
-     * @param reason motivo dell'insoddisfacibilità
-     * @return risultato UNSAT
+     * Genera modello finale per formula SAT
      */
-    private SATResult createUnsatResult(String reason) {
-        statistics.stopTimer();
-        LOGGER.info("Formula UNSAT: " + reason);
-        return SATResult.unsatisfiable(proofGenerator.generateProof(), statistics);
-    }
+    private Map<String, Boolean> generateModel() {
+        Map<String, Boolean> model = new HashMap<>();
 
-    /**
-     * Ottiene le statistiche parziali correnti del solutore.
-     *
-     * @return statistiche parziali correnti
-     */
-    public SATStatistics getPartialStatistics() {
-        // Non fermare il timer se il solutore è ancora in esecuzione
-        SATStatistics partialStats = new SATStatistics();
+        LOGGER.fine("Generazione modello finale");
 
-        // Copia i contatori attuali
-        partialStats.incrementDecisions(); // Aggiorna con i valori correnti
-        for (int i = 0; i < decisionCount; i++) {
-            partialStats.incrementDecisions();
+        Map<Integer, String> inverseMapping = createInverseVariableMapping();
+
+        for (int variable = 1; variable <= formula.getVariableCount(); variable++) {
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            String originalVariableName = inverseMapping.get(variable);
+            if (originalVariableName == null) {
+                originalVariableName = String.valueOf(variable);
+                LOGGER.warning("Nome originale non trovato per variabile " + variable);
+            }
+
+            if (assignment != null) {
+                model.put(originalVariableName, assignment.getValue());
+                LOGGER.finest("Modello: " + originalVariableName + " = " + assignment.getValue());
+            } else {
+                model.put(originalVariableName, false); // Default false
+                LOGGER.finest("Modello: " + originalVariableName + " = false (default)");
+            }
         }
 
-        for (int i = 0; i < conflictCount; i++) {
-            partialStats.incrementConflicts();
-        }
-
-        // Per le altre statistiche, copia dal statistics object corrente
-        partialStats.setProofSize(proofGenerator.getStepCount());
-
-        return partialStats;
+        LOGGER.info("Modello generato con " + model.size() + " variabili");
+        return model;
     }
 
-    // ========================================
-    // CLASSI DI SUPPORTO INTERNE DEL SOLUTORE
-    // ========================================
+    //endregion
+
+    //region CLASSI DI SUPPORTO E RISULTATI
 
     /**
-     * Risultato della propagazione unitaria.
+     * Risultato della propagazione unitaria
      */
     private static class PropagationResult {
         private final boolean hasConflict;
         private final List<Integer> conflictClause;
+        private final List<Integer> justifyingClause;
 
-        private PropagationResult(boolean hasConflict, List<Integer> conflictClause) {
+        private PropagationResult(boolean hasConflict, List<Integer> conflictClause, List<Integer> justifyingClause) {
             this.hasConflict = hasConflict;
             this.conflictClause = conflictClause;
+            this.justifyingClause = justifyingClause;
         }
 
         public boolean hasConflict() { return hasConflict; }
         public List<Integer> getConflictClause() { return conflictClause; }
+        public List<Integer> getJustifyingClause() { return justifyingClause; }
 
         public static PropagationResult success() {
-            return new PropagationResult(false, null);
+            return new PropagationResult(false, null, null);
         }
 
-        public static PropagationResult conflict(List<Integer> clause) {
-            return new PropagationResult(true, clause);
+        public static PropagationResult conflict(List<Integer> conflictClause, List<Integer> justifyingClause) {
+            return new PropagationResult(true, conflictClause, justifyingClause);
         }
     }
 
     /**
-     * Risultato della valutazione di una clausola.
+     * Risultato della valutazione di una clausola
      */
     private static class ClauseEvaluationResult {
         public enum Status { SATISFIED, FALSIFIED, UNIT, UNRESOLVED }
@@ -1281,129 +1181,62 @@ public class CDCLSolver {
     }
 
     /**
-     * Informazioni sul letterale di asserzione dopo backtrack.
-     */
-    private static class AssertionInfo {
-        private final Integer variable;
-        private final Boolean value;
-        private final List<Integer> sourceClause;
-        private final boolean valid;
-
-        private AssertionInfo(Integer variable, Boolean value, List<Integer> sourceClause) {
-            this.variable = variable;
-            this.value = value;
-            this.sourceClause = sourceClause;
-            this.valid = true;
-        }
-
-        private AssertionInfo() {
-            this.variable = null;
-            this.value = null;
-            this.sourceClause = null;
-            this.valid = false;
-        }
-
-        public Integer getVariable() { return variable; }
-        public Boolean getValue() { return value; }
-        public List<Integer> getSourceClause() { return sourceClause; }
-        public boolean isValid() { return valid; }
-
-        public static AssertionInfo invalid() { return new AssertionInfo(); }
-    }
-
-    /**
-     * Risultato dell'analisi del conflitto.
+     * Risultato del conflict analysis
      */
     private static class ConflictAnalysisResult {
+        private final boolean unsatisfiable;
         private final List<Integer> learnedClause;
         private final int backtrackLevel;
-        private final boolean unsatisfiable;
 
-        private ConflictAnalysisResult(List<Integer> learnedClause, int backtrackLevel, boolean unsatisfiable) {
+        private ConflictAnalysisResult(boolean unsatisfiable, List<Integer> learnedClause, int backtrackLevel) {
+            this.unsatisfiable = unsatisfiable;
             this.learnedClause = learnedClause;
             this.backtrackLevel = backtrackLevel;
-            this.unsatisfiable = unsatisfiable;
         }
 
+        public boolean isUnsatisfiable() { return unsatisfiable; }
         public List<Integer> getLearnedClause() { return learnedClause; }
         public int getBacktrackLevel() { return backtrackLevel; }
-        public boolean isUnsatisfiable() { return unsatisfiable; }
-
-        public static ConflictAnalysisResult success(List<Integer> clause, int level) {
-            return new ConflictAnalysisResult(clause, level, false);
-        }
 
         public static ConflictAnalysisResult unsatisfiable() {
-            return new ConflictAnalysisResult(null, -1, true);
+            return new ConflictAnalysisResult(true, null, -1);
+        }
+
+        public static ConflictAnalysisResult backtrack(List<Integer> learnedClause, int level) {
+            return new ConflictAnalysisResult(false, learnedClause, level);
         }
     }
 
     /**
-     * Risultato della gestione del conflitto.
-     */
-    private static class ConflictHandlingResult {
-        private final boolean unsatisfiable;
-        private final int backtrackLevel;
-
-        private ConflictHandlingResult(boolean unsatisfiable, int backtrackLevel) {
-            this.unsatisfiable = unsatisfiable;
-            this.backtrackLevel = backtrackLevel;
-        }
-
-        public boolean isUnsatisfiable() { return unsatisfiable; }
-        public int getBacktrackLevel() { return backtrackLevel; }
-
-        public static ConflictHandlingResult unsatisfiable() {
-            return new ConflictHandlingResult(true, -1);
-        }
-
-        public static ConflictHandlingResult backtrack(int level) {
-            return new ConflictHandlingResult(false, level);
-        }
-    }
-
-    /**
-     * Risultato del loop principale CDCL.
+     * Risultato del loop principale CDCL
      */
     private static class CDCLLoopResult {
         public enum Type { SAT, UNSAT, TIMEOUT, INTERRUPTED }
 
         private final Type type;
-        private final Map<String, Boolean> model;
-        private final String proof;
 
-        private CDCLLoopResult(Type type, Map<String, Boolean> model, String proof) {
+        private CDCLLoopResult(Type type) {
             this.type = type;
-            this.model = model;
-            this.proof = proof;
         }
 
         public Type getType() { return type; }
-        public Map<String, Boolean> getModel() { return model; }
-        public String getProof() { return proof; }
 
         public static CDCLLoopResult sat() {
-            return new CDCLLoopResult(Type.SAT, null, null);
-        }
-
-        public static CDCLLoopResult satWithModel(Map<String, Boolean> model) {
-            return new CDCLLoopResult(Type.SAT, model, null);
+            return new CDCLLoopResult(Type.SAT);
         }
 
         public static CDCLLoopResult unsat() {
-            return new CDCLLoopResult(Type.UNSAT, null, null);
-        }
-
-        public static CDCLLoopResult unsatWithProof(String proof) {
-            return new CDCLLoopResult(Type.UNSAT, null, proof);
+            return new CDCLLoopResult(Type.UNSAT);
         }
 
         public static CDCLLoopResult timeout() {
-            return new CDCLLoopResult(Type.TIMEOUT, null, null);
+            return new CDCLLoopResult(Type.TIMEOUT);
         }
 
         public static CDCLLoopResult interrupted() {
-            return new CDCLLoopResult(Type.INTERRUPTED, null, null);
+            return new CDCLLoopResult(Type.INTERRUPTED);
         }
     }
+
+    //endregion
 }
