@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.6.1] - 2025-06-07
+### Fixed
+- Migliorato il contenuto dei file `.result` generati dal risolutore:
+  ora riportano il tipo di formula (CNF oppure E-CNF), il numero di propagazioni
+  e il numero di clausole apprese.
+
+
 ## [1.6.0] - 2025-06-07
 ### Added
 - Implementata la trasformazione in forma normale congiunta equisoddisfacibile (E-CNF)

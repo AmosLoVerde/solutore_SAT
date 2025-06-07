@@ -38,7 +38,7 @@ import java.util.stream.Stream;
  * - Trasformazione di Tseitin per E-CNF equisoddisfacibili
  *
  * @author Amos Lo Verde
- * @version 1.6.0
+ * @version 1.6.1
  */
 public final class Main {
 
@@ -227,7 +227,7 @@ public final class Main {
             SATResult satResult = solveSATWithTimeout(formulaToSolve, timeoutSeconds);
 
             if (satResult == null) {
-                return handleTimeoutCase(filePath, outputPath, timeoutSeconds);
+                return handleTimeoutCase(filePath, outputPath, timeoutSeconds, useTseitin);
             }
 
             // STEP 6: Salvataggio risultati
@@ -518,19 +518,20 @@ public final class Main {
 
         if (useTseitin) {
             writer.write("-> File E-CNF: " + getBaseFileName(originalFilePath) + ".ecnf\n");
-            writer.write("-> File statistiche: " + getBaseFileName(originalFilePath) + ".stats\n");
-            writer.write("-> Trasformazione: Tseitin (E-CNF)\n");
+            writer.write("\n");
+            writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".ecnf\n");
         } else {
-            writer.write("-> Trasformazione: CNF standard\n");
+            writer.write("\n");
+            writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".cnf\n");
         }
 
         writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
 
         // Contenuto principale
         if (result.isSatisfiable()) {
-            writeSATResult(writer, result);
+            writeSATResult(writer, result, useTseitin);
         } else {
-            writeUNSATResult(writer, result);
+            writeUNSATResult(writer, result, useTseitin);
         }
 
         // Statistiche finali
@@ -538,14 +539,17 @@ public final class Main {
         SATStatistics stats = result.getStatistics();
         writer.write("Decisioni: " + stats.getDecisions() + "\n");
         writer.write("Conflitti: " + stats.getConflicts() + "\n");
+        writer.write("Propagazioni: " + stats.getPropagations() + "\n");
+        writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
         writer.write("Tempo risoluzione: " + stats.getExecutionTimeMs() + " ms\n");
     }
 
     /**
      * Scrive risultato SAT con modello delle variabili
      */
-    private static void writeSATResult(FileWriter writer, SATResult result) throws IOException {
-        writer.write("La formula CNF è SAT.\n");
+    private static void writeSATResult(FileWriter writer, SATResult result, boolean useTseitin) throws IOException {
+        String formulaType = useTseitin ? "E-CNF" : "CNF";
+        writer.write("La formula " + formulaType + " è SAT.\n");
         writer.write("Modello = {");
 
         if (result.getAssignment() != null && !result.getAssignment().isEmpty()) {
@@ -565,8 +569,9 @@ public final class Main {
     /**
      * Scrive risultato UNSAT con prova di risoluzione
      */
-    private static void writeUNSATResult(FileWriter writer, SATResult result) throws IOException {
-        writer.write("La formula CNF è UNSAT.\n");
+    private static void writeUNSATResult(FileWriter writer, SATResult result, boolean useTseitin) throws IOException {
+        String formulaType = useTseitin ? "E-CNF" : "CNF";
+        writer.write("La formula " + formulaType + " è UNSAT.\n");
         writer.write("Prova generata:\n");
 
         if (result.getProof() != null && !result.getProof().trim().isEmpty()) {
@@ -592,11 +597,11 @@ public final class Main {
     /**
      * Gestisce il caso di timeout durante risoluzione SAT
      */
-    private static ProcessResult handleTimeoutCase(String filePath, String outputPath, int timeoutSeconds) throws IOException {
+    private static ProcessResult handleTimeoutCase(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) throws IOException {
         System.out.println("TIMEOUT: Superato il limite di " + timeoutSeconds + " secondi");
 
         // Salva report specifico per timeout
-        saveTimeoutResult(filePath, outputPath, timeoutSeconds);
+        saveTimeoutResult(filePath, outputPath, timeoutSeconds, useTseitin);
 
         return ProcessResult.timeout();
     }
@@ -604,7 +609,7 @@ public final class Main {
     /**
      * Crea un report specifico per casi di timeout
      */
-    private static void saveTimeoutResult(String filePath, String outputPath, int timeoutSeconds) throws IOException {
+    private static void saveTimeoutResult(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) throws IOException {
         Path resultDir = getResultDirectory(filePath, outputPath);
         Files.createDirectories(resultDir);
 
@@ -616,12 +621,25 @@ public final class Main {
             writer.write("| RISOLUZIONE SAT |\n");
             writer.write("-------------------\n");
             writer.write("-> File originale: " + Paths.get(filePath).getFileName() + "\n");
-            writer.write("-> File CNF: " + baseFileName + ".cnf\n\n");
-            writer.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
+            writer.write("-> File CNF: " + baseFileName + ".cnf\n");
+
+            if (useTseitin) {
+                writer.write("-> File E-CNF: " + baseFileName + ".ecnf\n");
+                writer.write("\n");
+                writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".ecnf\n");
+            } else {
+                writer.write("\n");
+                writer.write("È stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".cnf\n");
+            }
+
+            writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
             writer.write("La risoluzione ha superato il tempo limite di " + timeoutSeconds + " secondi.\n");
             writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
             writer.write("Decisioni effettuate: N/A\n");
             writer.write("Conflitti: N/A\n");
+            writer.write("Propagazioni: N/A\n");
+            writer.write("Clausole apprese: N/A\n");
+            writer.write("Tempo risoluzione: TIMEOUT\n");
         }
     }
 
