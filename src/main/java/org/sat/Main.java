@@ -10,6 +10,7 @@ import org.sat.cdcl.SATResult;
 import org.sat.cdcl.SATStatistics;
 import org.sat.cnf.CNFConverter;
 import org.sat.cnf.LogicFormulaParser;
+import org.sat.optimization.TseitinConverter;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -34,9 +35,10 @@ import java.util.stream.Stream;
  * - First 1UIP per apprendimento clausole e backjumping
  * - Generazione automatica di prove per formule UNSAT
  * - Unit propagation con rilevamento conflitti
+ * - Trasformazione di Tseitin per E-CNF equisoddisfacibili
  *
  * @author Amos Lo Verde
- * @version 1.5.3
+ * @version 1.6.0
  */
 public final class Main {
 
@@ -52,6 +54,7 @@ public final class Main {
     private static final String DIR_PARAM = "-d";
     private static final String OUTPUT_PARAM = "-o";
     private static final String TIMEOUT_PARAM = "-t";
+    private static final String CONVERT_PARAM = "-convert=tseitin";
 
     /**
      * Configurazioni timeout
@@ -136,6 +139,7 @@ public final class Main {
     private static void displayConfiguration(Configuration config) {
         System.out.println("\n=== CONFIGURAZIONE SOLUTORE SAT ===");
         System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
+        System.out.println("Trasformazione: " + (config.useTseitin ? "Tseitin (E-CNF)" : "CNF standard"));
 
         if (config.isFileMode) {
             System.out.println("Modalità: File singolo");
@@ -156,10 +160,10 @@ public final class Main {
     private static void executeSelectedMode(Configuration config) {
         if (config.isFileMode) {
             LOGGER.info("Esecuzione modalità file singolo: " + config.inputPath);
-            processFile(config.inputPath, config.outputPath, config.timeoutSeconds);
+            processFile(config.inputPath, config.outputPath, config.timeoutSeconds, config.useTseitin);
         } else {
             LOGGER.info("Esecuzione modalità directory: " + config.inputPath);
-            processDirectory(config.inputPath, config.outputPath, config.timeoutSeconds);
+            processDirectory(config.inputPath, config.outputPath, config.timeoutSeconds, config.useTseitin);
         }
     }
 
@@ -175,17 +179,20 @@ public final class Main {
      * 1. Lettura formula da file
      * 2. Parsing con ANTLR (grammatica logica proposizionale)
      * 3. Conversione automatica in CNF
-     * 4. Risoluzione SAT con CDCL e timeout
-     * 5. Salvataggio risultati e statistiche
+     * 4. [OPZIONALE] Conversione Tseitin in E-CNF se richiesta
+     * 5. Risoluzione SAT con CDCL e timeout
+     * 6. Salvataggio risultati e statistiche
      *
      * @param filePath percorso file da elaborare
      * @param outputPath directory output (null = default)
      * @param timeoutSeconds timeout per risoluzione SAT
+     * @param useTseitin flag per conversione Tseitin
      * @return risultato elaborazione
      */
-    private static ProcessResult processFile(String filePath, String outputPath, int timeoutSeconds) {
+    private static ProcessResult processFile(String filePath, String outputPath, int timeoutSeconds, boolean useTseitin) {
         System.out.println("\n=== ELABORAZIONE FILE ===");
         System.out.println("File: " + Paths.get(filePath).getFileName());
+        System.out.println("Conversione: " + (useTseitin ? "Tseitin (E-CNF)" : "CNF standard"));
         System.out.println("========================\n");
 
         try {
@@ -195,21 +202,39 @@ public final class Main {
             // STEP 2: Conversione in CNF
             CNFConversionResult cnfResult = convertToCNF(formulaText);
 
-            // STEP 3: Salvataggio CNF
+            // STEP 3: Salvataggio CNF standard (sempre eseguito)
             saveCNFToFile(cnfResult.cnfString, filePath, outputPath);
 
-            // STEP 4: Risoluzione SAT con timeout
-            SATResult satResult = solveSATWithTimeout(cnfResult.cnfFormula, timeoutSeconds);
+            // STEP 4: Conversione Tseitin (se richiesta)
+            CNFConverter formulaToSolve;
+            String conversionInfo = "";
+
+            if (useTseitin) {
+                TseitinConversionResult tseitinResult = convertToECNF(cnfResult);
+                formulaToSolve = tseitinResult.ecnfFormula;
+                conversionInfo = tseitinResult.conversionInfo;
+
+                // Salvataggio E-CNF - SOLO FORMULA
+                saveECNFToFile(tseitinResult.ecnfString, filePath, outputPath);
+
+                // Salvataggio statistiche Tseitin - FILE SEPARATO
+                saveTseitinStatsToFile(conversionInfo, filePath, outputPath);
+            } else {
+                formulaToSolve = cnfResult.cnfFormula;
+            }
+
+            // STEP 5: Risoluzione SAT con timeout
+            SATResult satResult = solveSATWithTimeout(formulaToSolve, timeoutSeconds);
 
             if (satResult == null) {
                 return handleTimeoutCase(filePath, outputPath, timeoutSeconds);
             }
 
-            // STEP 5: Salvataggio risultati
-            saveResultsToFile(satResult, cnfResult.cnfFormula, filePath, outputPath);
+            // STEP 6: Salvataggio risultati
+            saveResultsToFile(satResult, formulaToSolve, filePath, outputPath, conversionInfo, useTseitin);
 
-            // STEP 6: Visualizzazione statistiche
-            displayFinalStatistics(satResult, cnfResult.cnfFormula);
+            // STEP 7: Visualizzazione statistiche
+            displayFinalStatistics(satResult, formulaToSolve);
 
             return ProcessResult.success();
 
@@ -258,11 +283,27 @@ public final class Main {
     }
 
     /**
+     * Converte una formula CNF in E-CNF utilizzando l'algoritmo di Tseitin.
+     */
+    private static TseitinConversionResult convertToECNF(CNFConversionResult cnfResult) throws Exception {
+        System.out.println("3a. Conversione Tseitin in E-CNF...");
+
+        TseitinConverter tseitinConverter = new TseitinConverter();
+        CNFConverter ecnfFormula = tseitinConverter.convertToECNF(cnfResult.cnfFormula);
+        String ecnfString = ecnfFormula.toString();
+        String conversionInfo = tseitinConverter.getConversionInfo();
+
+        LOGGER.info("Formula E-CNF generata: " + ecnfString);
+        return new TseitinConversionResult(ecnfFormula, ecnfString, conversionInfo);
+    }
+
+    /**
      * Risolve una formula CNF utilizzando l'algoritmo CDCL con gestione timeout.
      * Utilizza ExecutorService per controllo temporale e interruzione sicura.
      */
     private static SATResult solveSATWithTimeout(CNFConverter cnfFormula, int timeoutSeconds) {
-        System.out.println("4. Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
+        String stepNumber = "4";
+        System.out.println(stepNumber + ". Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         CDCLSolver solver = new CDCLSolver(cnfFormula);
@@ -296,7 +337,7 @@ public final class Main {
      * Elabora tutti i file .txt in una directory specificata.
      * Fornisce elaborazione batch con statistiche aggregate.
      */
-    private static void processDirectory(String dirPath, String outputPath, int timeoutSeconds) {
+    private static void processDirectory(String dirPath, String outputPath, int timeoutSeconds, boolean useTseitin) {
         LOGGER.info("Inizio elaborazione directory: " + dirPath);
 
         // Validazione directory input
@@ -311,7 +352,7 @@ public final class Main {
             }
 
             // Elaborazione sequenziale batch
-            BatchResult batchResult = processBatch(txtFiles, outputPath, timeoutSeconds);
+            BatchResult batchResult = processBatch(txtFiles, outputPath, timeoutSeconds, useTseitin);
 
             // Riepilogo finale
             displayBatchSummary(batchResult);
@@ -344,16 +385,17 @@ public final class Main {
     /**
      * Elabora sequenzialmente una lista di file con gestione errori isolata
      */
-    private static BatchResult processBatch(List<File> files, String outputPath, int timeoutSeconds) {
+    private static BatchResult processBatch(List<File> files, String outputPath, int timeoutSeconds, boolean useTseitin) {
         BatchResult result = new BatchResult(files.size());
 
-        System.out.println("Timeout per file: " + timeoutSeconds + " secondi\n");
+        System.out.println("Timeout per file: " + timeoutSeconds + " secondi");
+        System.out.println("Conversione: " + (useTseitin ? "Tseitin (E-CNF)" : "CNF standard") + "\n");
 
         for (File file : files) {
             try {
                 System.out.println("Elaborazione: " + file.getName());
 
-                ProcessResult fileResult = processFile(file.getAbsolutePath(), outputPath, timeoutSeconds);
+                ProcessResult fileResult = processFile(file.getAbsolutePath(), outputPath, timeoutSeconds, useTseitin);
 
                 // Aggiornamento statistiche batch
                 if (fileResult.isSuccess()) {
@@ -401,11 +443,52 @@ public final class Main {
     }
 
     /**
+     * Salva la formula E-CNF (Tseitin) in un file dedicato - SOLO FORMULA
+     */
+    private static void saveECNFToFile(String ecnfString, String originalFilePath, String outputPath) throws IOException {
+        System.out.println("3b. Salvataggio formula E-CNF...");
+
+        Path ecnfDir = getECNFDirectory(originalFilePath, outputPath);
+        Files.createDirectories(ecnfDir);
+
+        String baseFileName = getBaseFileName(originalFilePath);
+        Path ecnfFilePath = ecnfDir.resolve(baseFileName + ".ecnf");
+
+        // SOLO LA FORMULA CONVERTITA - nessun commento o metadata
+        try (FileWriter writer = new FileWriter(ecnfFilePath.toFile())) {
+            writer.write(ecnfString);
+        }
+
+        LOGGER.info("Formula E-CNF salvata: " + ecnfFilePath);
+    }
+
+    /**
+     * Salva le statistiche di conversione Tseitin in file separato
+     */
+    private static void saveTseitinStatsToFile(String conversionInfo, String originalFilePath, String outputPath) throws IOException {
+        System.out.println("3c. Salvataggio statistiche conversione Tseitin...");
+
+        Path statsDir = getStatsDirectory(originalFilePath, outputPath);
+        Files.createDirectories(statsDir);
+
+        String baseFileName = getBaseFileName(originalFilePath);
+        Path statsFilePath = statsDir.resolve(baseFileName + ".stats");
+
+        try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
+            writer.write(conversionInfo);
+        }
+
+        LOGGER.info("Statistiche Tseitin salvate: " + statsFilePath);
+    }
+
+    /**
      * Salva i risultati SAT completi con formato strutturato
      */
     private static void saveResultsToFile(SATResult result, CNFConverter cnfFormula,
-                                          String originalFilePath, String outputPath) throws IOException {
-        System.out.println("5. Salvataggio risultati...");
+                                          String originalFilePath, String outputPath,
+                                          String conversionInfo, boolean useTseitin) throws IOException {
+        String stepNumber = useTseitin ? "5" : "5";
+        System.out.println(stepNumber + ". Salvataggio risultati...");
 
         Path resultDir = getResultDirectory(originalFilePath, outputPath);
         Files.createDirectories(resultDir);
@@ -414,7 +497,7 @@ public final class Main {
         Path resultFilePath = resultDir.resolve(baseFileName + ".result");
 
         try (FileWriter writer = new FileWriter(resultFilePath.toFile())) {
-            writeCompleteResult(writer, result, originalFilePath, cnfFormula);
+            writeCompleteResult(writer, result, originalFilePath, cnfFormula, conversionInfo, useTseitin);
         }
 
         LOGGER.info("Risultati salvati: " + resultFilePath);
@@ -424,14 +507,24 @@ public final class Main {
      * Scrive un report completo strutturato del risultato SAT
      */
     private static void writeCompleteResult(FileWriter writer, SATResult result,
-                                            String originalFilePath, CNFConverter cnfFormula) throws IOException {
+                                            String originalFilePath, CNFConverter cnfFormula,
+                                            String conversionInfo, boolean useTseitin) throws IOException {
         // Header del report
         writer.write("-------------------\n");
         writer.write("| RISOLUZIONE SAT |\n");
         writer.write("-------------------\n");
         writer.write("-> File originale: " + Paths.get(originalFilePath).getFileName() + "\n");
-        writer.write("-> File CNF: " + getBaseFileName(originalFilePath) + ".cnf\n\n");
-        writer.write("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
+        writer.write("-> File CNF: " + getBaseFileName(originalFilePath) + ".cnf\n");
+
+        if (useTseitin) {
+            writer.write("-> File E-CNF: " + getBaseFileName(originalFilePath) + ".ecnf\n");
+            writer.write("-> File statistiche: " + getBaseFileName(originalFilePath) + ".stats\n");
+            writer.write("-> Trasformazione: Tseitin (E-CNF)\n");
+        } else {
+            writer.write("-> Trasformazione: CNF standard\n");
+        }
+
+        writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
 
         // Contenuto principale
         if (result.isSatisfiable()) {
@@ -586,6 +679,30 @@ public final class Main {
     }
 
     /**
+     * Ottiene la directory per file E-CNF (creata dinamicamente)
+     */
+    private static Path getECNFDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("E-CNF");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("E-CNF") : Paths.get("E-CNF");
+        }
+    }
+
+    /**
+     * Ottiene la directory per file statistiche Tseitin (creata dinamicamente)
+     */
+    private static Path getStatsDirectory(String originalFilePath, String outputPath) {
+        if (outputPath != null) {
+            return Paths.get(outputPath).resolve("STATS");
+        } else {
+            Path parentDir = Paths.get(originalFilePath).getParent();
+            return parentDir != null ? parentDir.resolve("STATS") : Paths.get("STATS");
+        }
+    }
+
+    /**
      * Ottiene la directory per file risultati (creata dinamicamente)
      */
     private static Path getResultDirectory(String originalFilePath, String outputPath) {
@@ -686,7 +803,7 @@ public final class Main {
      * Visualizza informazioni di help complete
      */
     private static void printHelp() {
-        System.out.println("\n=== SOLUTORE SAT CDCL v2.0.0 ===");
+        System.out.println("\n=== SOLUTORE SAT CDCL v2.1.0 ===");
         System.out.println("Solutore per problemi di soddisfacibilità booleana (SAT)");
         System.out.println("con algoritmo CDCL (Conflict-Driven Clause Learning)\n");
 
@@ -699,17 +816,22 @@ public final class Main {
         System.out.println("  -o <directory>  Directory di output personalizzata (opzionale)");
         System.out.println("  -t <secondi>    Timeout per ogni formula (min: " + MIN_TIMEOUT_SECONDS +
                 ", default: " + DEFAULT_TIMEOUT_SECONDS + ")");
+        System.out.println("  -convert=tseitin Usa trasformazione di Tseitin per E-CNF (opzionale)");
         System.out.println("  -h              Mostra questa guida\n");
 
         System.out.println("ESEMPI:");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt");
-        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30\n");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -convert=tseitin");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -convert=tseitin -t 60\n");
 
         System.out.println("NOTE:");
         System.out.println("  • Le opzioni -f e -d sono mutuamente esclusive");
         System.out.println("  • Il solver supporta formule con operatori: AND, OR, NOT, ->, <->");
         System.out.println("  • Output automatico: file .cnf e .result nelle directory CNF/ e RESULT/");
-        System.out.println("\n=====================================\n");
+        System.out.println("  • Con -convert=tseitin: file .ecnf e .stats nelle directory E-CNF/ e STATS/");
+        System.out.println("  • Tseitin è raccomandato per formule complesse (>8 operatori)\n");
+        System.out.println("=====================================\n");
     }
 
     //endregion
@@ -725,12 +847,14 @@ public final class Main {
         final String outputPath;
         final boolean isFileMode;
         final int timeoutSeconds;
+        final boolean useTseitin;
 
-        Configuration(String inputPath, String outputPath, boolean isFileMode, int timeoutSeconds) {
+        Configuration(String inputPath, String outputPath, boolean isFileMode, int timeoutSeconds, boolean useTseitin) {
             this.inputPath = inputPath;
             this.outputPath = outputPath;
             this.isFileMode = isFileMode;
             this.timeoutSeconds = timeoutSeconds;
+            this.useTseitin = useTseitin;
         }
     }
 
@@ -747,6 +871,7 @@ public final class Main {
             String outputPath = null;
             boolean isFileMode = false;
             boolean isDirectoryMode = false;
+            boolean useTseitin = false;
             int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
 
             for (int i = 0; i < args.length; i++) {
@@ -778,6 +903,9 @@ public final class Main {
                     case TIMEOUT_PARAM -> {
                         timeoutSeconds = parseAndValidateTimeout(args, i++);
                     }
+                    case CONVERT_PARAM -> {
+                        useTseitin = true;
+                    }
                     default -> throw new IllegalArgumentException("Parametro sconosciuto: " + args[i]);
                 }
             }
@@ -787,7 +915,7 @@ public final class Main {
                 throw new IllegalArgumentException("Specificare un file (-f) o directory (-d)");
             }
 
-            return new Configuration(inputPath, outputPath, isFileMode, timeoutSeconds);
+            return new Configuration(inputPath, outputPath, isFileMode, timeoutSeconds, useTseitin);
         }
 
         /**
@@ -920,6 +1048,21 @@ public final class Main {
         CNFConversionResult(CNFConverter cnfFormula, String cnfString) {
             this.cnfFormula = cnfFormula;
             this.cnfString = cnfString;
+        }
+    }
+
+    /**
+     * Risultato conversione Tseitin con informazioni aggiuntive
+     */
+    private static class TseitinConversionResult {
+        final CNFConverter ecnfFormula;
+        final String ecnfString;
+        final String conversionInfo;
+
+        TseitinConversionResult(CNFConverter ecnfFormula, String ecnfString, String conversionInfo) {
+            this.ecnfFormula = ecnfFormula;
+            this.ecnfString = ecnfString;
+            this.conversionInfo = conversionInfo;
         }
     }
 
