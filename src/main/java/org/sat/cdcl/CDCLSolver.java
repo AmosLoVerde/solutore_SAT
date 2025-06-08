@@ -10,11 +10,14 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * SOLUTORE CDCL AVANZATO - Implementazione completa con restart opzionale
+ * SOLUTORE CDCL AVANZATO - Implementazione completa con restart opzionale e anti-loop VSIDS
  *
  * Implementazione dell'algoritmo CDCL con integrazione opzionale della tecnica restart
  * per prevenzione stalli durante la ricerca SAT. Il restart è attivato solo quando
  * esplicitamente richiesto tramite configurazione.
+ * 
+ * Anti-loop VSIDS - Previene riselezionare immediatamente la stessa variabile
+ * dopo backtrack per evitare loop infiniti nella ricerca.
  */
 public class CDCLSolver {
 
@@ -59,8 +62,25 @@ public class CDCLSolver {
     /** Flag per interruzione esterna controllata (gestione timeout) */
     private volatile boolean interrupted = false;
 
-    /** NUOVO: Tecnica restart opzionale (null se non abilitata) */
+    /** Tecnica restart opzionale (null se non abilitata) */
     private RestartTechnique restartTechnique;
+
+    //endregion
+
+    //region ANTI-LOOP VSIDS TRACKING
+
+    /**
+     * Ultima variabile scelta per decisione.
+     * Utilizzata per prevenire riselezionare immediatamente la stessa variabile
+     * dopo backtrack, evitando loop infiniti nella ricerca VSIDS.
+     */
+    private Integer lastChosenVariable;
+
+    /**
+     * Flag che indica se l'ultima decisione ha causato un backtrack.
+     * Se true, la prossima decisione non può riselezionare lastChosenVariable.
+     */
+    private boolean lastDecisionCausedBacktrack;
 
     //endregion
 
@@ -97,7 +117,7 @@ public class CDCLSolver {
         this.proofGenerator = new ProofGenerator();
         this.proofGenerator.setVariableMapping(createInverseVariableMapping());
 
-        // NUOVO: Inizializzazione restart opzionale
+        // Inizializzazione restart opzionale
         if (enableRestart) {
             this.restartTechnique = new RestartTechnique();
             LOGGER.info("Restart technique ABILITATA");
@@ -110,6 +130,10 @@ public class CDCLSolver {
         this.conflictCount = 0;
         this.decisionCount = 0;
         this.interrupted = false;
+
+        // Inizializzazione anti-loop VSIDS
+        this.lastChosenVariable = null;
+        this.lastDecisionCausedBacktrack = false;
 
         // Validazione e logging
         logSolverInitializationInfo();
@@ -193,6 +217,8 @@ public class CDCLSolver {
         } else if (clauseVariableRatio < 2.0) {
             LOGGER.info("Formula sparsa rilevata - ricerca potenzialmente più veloce");
         }
+
+        LOGGER.info("Anti-loop VSIDS: ATTIVO per prevenzione cicli infiniti");
     }
 
     //endregion
@@ -242,7 +268,7 @@ public class CDCLSolver {
             partialStats.incrementConflicts();
         }
 
-        // NUOVO: Statistiche restart se abilitato
+        // Statistiche restart se abilitato
         if (restartTechnique != null) {
             for (int i = 0; i < restartTechnique.getTotalRestarts(); i++) {
                 partialStats.incrementRestarts();
@@ -312,6 +338,10 @@ public class CDCLSolver {
 
                 // STEP 4: Learning e backtracking
                 executeLearningAndBacktrack(analysisResult);
+
+                // Marca che l'ultima decisione ha causato backtrack
+                markLastDecisionCausedBacktrack();
+
                 continue; // Riprova con nuova configurazione
             }
 
@@ -323,6 +353,17 @@ public class CDCLSolver {
 
         LOGGER.info("Loop CDCL completato - Iterazioni: " + iterationCount);
         return interrupted ? CDCLExecutionResult.interrupted() : CDCLExecutionResult.satisfiable();
+    }
+
+    /**
+     * Marca che l'ultima decisione ha causato un backtrack.
+     * Questo triggera l'anti-loop nella prossima selezione variabile.
+     */
+    private void markLastDecisionCausedBacktrack() {
+        if (lastChosenVariable != null) {
+            lastDecisionCausedBacktrack = true;
+            LOGGER.finest("Anti-loop VSIDS attivato per variabile: " + lastChosenVariable);
+        }
     }
 
     /**
@@ -394,8 +435,13 @@ public class CDCLSolver {
             restartInfo = String.format(", Restart: %d", restartTechnique.getTotalRestarts());
         }
 
-        LOGGER.fine(String.format("Iterazione %d - Livello: %d, Decisioni: %d, Conflitti: %d%s, Assegnate: %d/%d",
-                iterationCount, currentLevel, decisionCount, conflictCount, restartInfo, assignedCount, totalVariables));
+        String antiLoopInfo = "";
+        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
+            antiLoopInfo = String.format(", Anti-loop attivo (var %d bloccata)", lastChosenVariable);
+        }
+
+        LOGGER.fine(String.format("Iterazione %d - Livello: %d, Decisioni: %d, Conflitti: %d%s, Assegnate: %d/%d%s",
+                iterationCount, currentLevel, decisionCount, conflictCount, restartInfo, assignedCount, totalVariables, antiLoopInfo));
     }
 
     //endregion
@@ -418,7 +464,7 @@ public class CDCLSolver {
         // Aggiorna contatori VSIDS per migliorare euristica futura
         updateVSIDSCountersAfterConflict(conflictClause);
 
-        // NUOVO: Gestione restart se abilitato
+        // Gestione restart se abilitato
         if (restartTechnique != null) {
             boolean shouldRestart = restartTechnique.registerConflictAndCheckRestart();
 
@@ -455,7 +501,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Esegue procedura restart completa.
+     * Esegue procedura restart completa.
      */
     private ConflictAnalysisResult executeRestartProcedure(ConflictAnalysisResult normalResult) {
         LOGGER.info("=== ESECUZIONE RESTART PROCEDURA ===");
@@ -484,6 +530,9 @@ public class CDCLSolver {
             // Aggiorna clausole apprese con quelle ottimizzate
             updateLearnedClausesFromRestart(restartResult);
 
+            // Reset anti-loop dopo restart
+            resetAntiLoopTracking();
+
             LOGGER.info("Restart #" + restartResult.restartNumber + " completato");
             LOGGER.info("Sussunzione: " + restartResult.subsumptionRemovals + " clausole rimosse");
 
@@ -495,6 +544,16 @@ public class CDCLSolver {
             // Fallback: continua con backtrack normale
             return normalResult;
         }
+    }
+
+    /**
+     * Reset del tracking anti-loop dopo restart.
+     * Il restart resetta completamente la ricerca quindi è sicuro ripartire da capo.
+     */
+    private void resetAntiLoopTracking() {
+        lastChosenVariable = null;
+        lastDecisionCausedBacktrack = false;
+        LOGGER.fine("Anti-loop VSIDS: Reset dopo restart");
     }
 
     /**
@@ -1098,29 +1157,106 @@ public class CDCLSolver {
 
     //endregion
 
-    //region DECISION MAKING E EURISTICA VSIDS
+    //region DECISION MAKING E EURISTICA VSIDS CON ANTI-LOOP
 
     /**
-     * Esegue decision making con euristica VSIDS avanzata.
+     * Esegue decision making con euristica VSIDS avanzata e anti-loop.
+     *
+     * ALGORITMO ANTI-LOOP:
+     * 1. Se lastDecisionCausedBacktrack è true, salta lastChosenVariable
+     * 2. Trova prossima variabile non assegnata nell'ordine di frequenza
+     * 3. Se non trova alternative, riabilita lastChosenVariable come fallback
+     * 4. Aggiorna tracking per prossima iterazione
      */
     private void executeDecisionMaking() {
-        LOGGER.fine("Avvio decision making con euristica VSIDS");
+        LOGGER.fine("Avvio decision making con euristica VSIDS e anti-loop");
 
-        // Trova prima variabile non assegnata (già ordinate per frequenza)
+        Integer selectedVariable = null;
+        Boolean selectedPolarity = null;
+
+        // Strategia di selezione con anti-loop
+        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
+            LOGGER.fine("Anti-loop attivo: evitando variabile " + lastChosenVariable);
+
+            // Trova variabile alternativa escludendo quella bloccata
+            VariableSelection selection = findAlternativeVariableWithAntiLoop(lastChosenVariable);
+
+            if (selection != null) {
+                selectedVariable = selection.variable;
+                selectedPolarity = selection.polarity;
+                LOGGER.fine("Variabile alternativa selezionata: " + selectedVariable + " (anti-loop)");
+            } else {
+                // Fallback: nessuna alternativa, riabilita la variabile bloccata
+                LOGGER.fine("Nessuna alternativa trovata, riabilitando variabile " + lastChosenVariable);
+                selectedVariable = lastChosenVariable;
+                selectedPolarity = selectOptimalPolarity(lastChosenVariable);
+            }
+
+            // Reset flag anti-loop dopo una decisione
+            lastDecisionCausedBacktrack = false;
+
+        } else {
+            // Strategia normale: prima variabile non assegnata
+            VariableSelection selection = findFirstUnassignedVariable();
+            if (selection != null) {
+                selectedVariable = selection.variable;
+                selectedPolarity = selection.polarity;
+            }
+        }
+
+        // Validazione selezione
+        if (selectedVariable == null) {
+            throw new IllegalStateException("Decision making chiamato ma nessuna variabile disponibile");
+        }
+
+        // Registra decisione e aggiorna tracking
+        recordDecision(selectedVariable, selectedPolarity);
+        updateAntiLoopTracking(selectedVariable);
+    }
+
+    /**
+     * Trova variabile alternativa escludendo quella bloccata dall'anti-loop.
+     */
+    private VariableSelection findAlternativeVariableWithAntiLoop(Integer blockedVariable) {
+        for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
+            Integer variable = entry.getKey();
+
+            // Salta variabile bloccata e variabili già assegnate
+            if (variable.equals(blockedVariable) || entry.getValue() != null) {
+                continue;
+            }
+
+            // Variabile non assegnata e non bloccata trovata
+            Boolean polarity = selectOptimalPolarity(variable);
+            return new VariableSelection(variable, polarity);
+        }
+
+        return null; // Nessuna alternativa trovata
+    }
+
+    /**
+     * Trova prima variabile non assegnata (strategia normale).
+     */
+    private VariableSelection findFirstUnassignedVariable() {
         for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
             Integer variable = entry.getKey();
 
             if (entry.getValue() == null) {
-                // Variabile non assegnata trovata
-                Boolean selectedPolarity = selectOptimalPolarity(variable);
-
-                // Registra decisione
-                recordDecision(variable, selectedPolarity);
-                return;
+                Boolean polarity = selectOptimalPolarity(variable);
+                return new VariableSelection(variable, polarity);
             }
         }
 
-        throw new IllegalStateException("Decision making chiamato ma nessuna variabile disponibile");
+        return null;
+    }
+
+    /**
+     * Aggiorna tracking anti-loop dopo decisione.
+     */
+    private void updateAntiLoopTracking(Integer chosenVariable) {
+        lastChosenVariable = chosenVariable;
+        // lastDecisionCausedBacktrack viene impostato a true solo se si verifica backtrack
+        LOGGER.finest("Anti-loop tracking: lastChosenVariable = " + chosenVariable);
     }
 
     /**
@@ -1324,7 +1460,7 @@ public class CDCLSolver {
         LOGGER.info("Decisioni totali: " + decisionCount);
         LOGGER.info("Conflitti rilevati: " + conflictCount);
 
-        // NUOVO: Log statistiche restart se abilitato
+        // Log statistiche restart se abilitato
         if (restartTechnique != null) {
             LOGGER.info("Restart eseguiti: " + restartTechnique.getTotalRestarts());
             LOGGER.info("Sussunzione rimozioni: " + restartTechnique.getTotalSubsumptionRemovals());
@@ -1346,13 +1482,21 @@ public class CDCLSolver {
             LOGGER.info("Efficacia learning: " + String.format("%.2f", learningRate) + " clausole/conflitto");
         }
 
-        // NUOVO: Statistiche restart se disponibili
+        // Statistiche restart se disponibili
         if (restartTechnique != null && restartTechnique.getTotalRestarts() > 0) {
             double restartRate = (double) conflictCount / restartTechnique.getTotalRestarts();
             LOGGER.info("Frequenza restart: " + String.format("%.1f", restartRate) + " conflitti/restart");
 
             double subsumptionRate = (double) restartTechnique.getTotalSubsumptionRemovals() / restartTechnique.getTotalRestarts();
             LOGGER.info("Efficacia sussunzione: " + String.format("%.1f", subsumptionRate) + " rimozioni/restart");
+        }
+
+        // Statistiche anti-loop
+        if (lastChosenVariable != null) {
+            LOGGER.info("Ultima variabile scelta: " + lastChosenVariable);
+            if (lastDecisionCausedBacktrack) {
+                LOGGER.info("Anti-loop: variabile bloccata per prossima decisione");
+            }
         }
     }
 
@@ -1361,7 +1505,7 @@ public class CDCLSolver {
     //region INTERFACCIA PUBBLICA RESTART
 
     /**
-     * NUOVO: Restituisce statistiche restart se abilitato.
+     * Restituisce statistiche restart se abilitato.
      */
     public String getRestartStatistics() {
         if (restartTechnique != null) {
@@ -1372,15 +1516,52 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica se restart è abilitato.
+     * Verifica se restart è abilitato.
      */
     public boolean isRestartEnabled() {
         return restartTechnique != null;
     }
 
+    /**
+     * Restituisce informazioni anti-loop per debugging.
+     */
+    public String getAntiLoopInfo() {
+        StringBuilder info = new StringBuilder();
+        info.append("=== ANTI-LOOP VSIDS INFO ===\n");
+        info.append("Ultima variabile scelta: ").append(lastChosenVariable != null ? lastChosenVariable : "nessuna").append("\n");
+        info.append("Backtrack flag attivo: ").append(lastDecisionCausedBacktrack).append("\n");
+
+        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
+            info.append("Variabile bloccata per prossima decisione: ").append(lastChosenVariable).append("\n");
+        } else {
+            info.append("Nessuna variabile bloccata\n");
+        }
+
+        info.append("============================");
+        return info.toString();
+    }
+
     //endregion
 
     //region CLASSI DI SUPPORTO
+
+    /**
+     * Classe di supporto per selezione variabile con polarità.
+     */
+    private static class VariableSelection {
+        final Integer variable;
+        final Boolean polarity;
+
+        VariableSelection(Integer variable, Boolean polarity) {
+            this.variable = variable;
+            this.polarity = polarity;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("VariableSelection{var=%d, pol=%s}", variable, polarity);
+        }
+    }
 
     /**
      * Risultato dell'esecuzione completa dell'algoritmo CDCL.
