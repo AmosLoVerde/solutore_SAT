@@ -5,6 +5,21 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.0] - 2025-06-08
+### Added
+- Implementata la tecnica di reinizio con sussunzione ogni 5 conflitti,
+  tramite la classe `RestartTechnique.java` nel package `optionalfeatures`.
+
+### Changed
+- Rimosso il file `CDCLSupport.java` e ristrutturata la logica di supporto al CDCL:
+  - Creato il package `support` contenente:
+    - `AssignedLiteral.java`
+    - `CNFFormula.java`
+    - `DecisionStack.java`
+  - Refactoring completo per migliorare modularità e chiarezza del codice.
+
+
+
 ## [1.7.2] - 2025-06-08
 ### Refactored
 - Riorganizzato il codice sorgente per migliorarne la chiarezza e la comprensione.

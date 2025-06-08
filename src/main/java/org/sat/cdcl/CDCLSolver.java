@@ -1,30 +1,20 @@
 package org.sat.cdcl;
 
 import org.sat.cnf.CNFConverter;
+import org.sat.optionalfeatures.RestartTechnique;
+import org.sat.support.CNFFormula;
+import org.sat.support.DecisionStack;
+import org.sat.support.AssignedLiteral;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * SOLUTORE CDCL AVANZATO - Implementazione completa dell'algoritmo Conflict-Driven Clause Learning
+ * SOLUTORE CDCL AVANZATO - Implementazione completa con restart opzionale
  *
- * Questo solutore implementa l'algoritmo CDCL state-of-the-art per problemi di soddisfacibilità booleana,
- * integrando tutte le tecniche moderne per massimizzare efficienza e correttezza.
- *
- * ALGORITMI CORE IMPLEMENTATI:
- * • Unit Propagation: Propagazione automatica clausole unitarie con rilevamento conflitti
- * • VSIDS Heuristic: Variable State Independent Decaying Sum per selezione ottimale variabili
- * • Conflict Analysis: Analisi matematicamente corretta con generazione spiegazioni sequenziali
- * • Non-chronological Backtracking: Backjump intelligente ai livelli necessari
- * • Clause Learning: Apprendimento dinamico clausole dai conflitti
- * • Proof Generation: Generazione automatica prove complete per formule UNSAT
- *
- * INNOVAZIONI SPECIFICHE:
- * • Gestione corretta spiegazioni sequenziali per conflitti livello 0
- * • Mapping intelligente clausole unitarie per tracciabilità prove
- * • Stack gerarchico ottimizzato per backtracking efficiente
- * • Sistema robusto di interruzione per gestione timeout
- *
+ * Implementazione dell'algoritmo CDCL con integrazione opzionale della tecnica restart
+ * per prevenzione stalli durante la ricerca SAT. Il restart è attivato solo quando
+ * esplicitamente richiesto tramite configurazione.
  */
 public class CDCLSolver {
 
@@ -69,25 +59,28 @@ public class CDCLSolver {
     /** Flag per interruzione esterna controllata (gestione timeout) */
     private volatile boolean interrupted = false;
 
+    /** NUOVO: Tecnica restart opzionale (null se non abilitata) */
+    private RestartTechnique restartTechnique;
+
     //endregion
 
     //region INIZIALIZZAZIONE E CONFIGURAZIONE SOLUTORE
 
     /**
-     * Costruisce il solutore CDCL completo con inizializzazione di tutte le strutture dati.
-     *
-     * PROCESSO DI INIZIALIZZAZIONE:
-     * 1. Conversione formula CNF in rappresentazione numerica ottimizzata
-     * 2. Inizializzazione stack gerarchico per gestione livelli
-     * 3. Setup strutture dati per assegnamenti ordinati per frequenza
-     * 4. Configurazione contatori VSIDS per euristica dinamica
-     * 5. Preparazione generatore prove con mapping variabili
-     *
+     * Costruisce il solutore CDCL completo senza restart.
      * @param cnfConverter formula CNF in formato albero da convertire
-     * @throws IllegalArgumentException se formula malformata
-     * @throws RuntimeException se errori durante inizializzazione
      */
     public CDCLSolver(CNFConverter cnfConverter) {
+        this(cnfConverter, false);
+    }
+
+    /**
+     * Costruisce il solutore CDCL completo con restart opzionale.
+     *
+     * @param cnfConverter formula CNF in formato albero da convertire
+     * @param enableRestart true per abilitare tecnica restart
+     */
+    public CDCLSolver(CNFConverter cnfConverter, boolean enableRestart) {
         LOGGER.info("=== INIZIALIZZAZIONE SOLUTORE CDCL AVANZATO ===");
 
         // Conversione e validazione formula
@@ -104,6 +97,15 @@ public class CDCLSolver {
         this.proofGenerator = new ProofGenerator();
         this.proofGenerator.setVariableMapping(createInverseVariableMapping());
 
+        // NUOVO: Inizializzazione restart opzionale
+        if (enableRestart) {
+            this.restartTechnique = new RestartTechnique();
+            LOGGER.info("Restart technique ABILITATA");
+        } else {
+            this.restartTechnique = null;
+            LOGGER.info("Restart technique DISABILITATA");
+        }
+
         // Reset contatori e stato
         this.conflictCount = 0;
         this.decisionCount = 0;
@@ -116,7 +118,6 @@ public class CDCLSolver {
 
     /**
      * Inizializza gli assegnamenti delle variabili con ottimizzazione per frequenza.
-     * Le variabili più frequenti nelle clausole vengono elaborate per prime per efficienza.
      */
     private LinkedHashMap<Integer, AssignedLiteral> initializeVariableAssignmentsOptimized() {
         // Calcola frequenza di apparizione per ogni variabile
@@ -133,7 +134,7 @@ public class CDCLSolver {
             }
         }
 
-        // Ordina per frequenza decrescente (più frequenti → priorità maggiore)
+        // Ordina per frequenza decrescente
         List<Map.Entry<Integer, Integer>> sortedByFrequency = new ArrayList<>(variableFrequencies.entrySet());
         sortedByFrequency.sort(Map.Entry.<Integer, Integer>comparingByValue().reversed());
 
@@ -149,7 +150,6 @@ public class CDCLSolver {
 
     /**
      * Inizializza contatori VSIDS per euristica dinamica di selezione variabili.
-     * Ogni letterale (positivo e negativo) ha un contatore separato.
      */
     private Map<Integer, Integer> initializeVSIDSCounters() {
         Map<Integer, Integer> counters = new HashMap<>();
@@ -165,7 +165,6 @@ public class CDCLSolver {
 
     /**
      * Crea mapping inverso per conversione ID numerico → nome variabile originale.
-     * Utilizzato per generazione output human-readable e debug.
      */
     private Map<Integer, String> createInverseVariableMapping() {
         Map<Integer, String> inverseMapping = new HashMap<>();
@@ -202,19 +201,6 @@ public class CDCLSolver {
 
     /**
      * METODO PRINCIPALE: Risolve la formula CNF utilizzando l'algoritmo CDCL completo.
-     *
-     * ALGORITMO CDCL COMPLETO:
-     * 1. Inizializzazione livello 0 con clausole unitarie originali
-     * 2. Loop principale fino a SAT/UNSAT/TIMEOUT
-     * 3. Verifica soddisfacimento completo
-     * 4. Unit propagation con rilevamento conflitti
-     * 5. Conflict analysis con generazione spiegazioni
-     * 6. Learning clausole e backtracking non-cronologico
-     * 7. Decision making con euristica VSIDS
-     * 8. Generazione risultato finale con modello/prova
-     *
-     * @return risultato completo con SAT/UNSAT, modello/prova, statistiche
-     * @throws RuntimeException se timeout o errori critici
      */
     public SATResult solve() {
         LOGGER.info("=== AVVIO RISOLUZIONE CDCL ===");
@@ -235,8 +221,7 @@ public class CDCLSolver {
     }
 
     /**
-     * Interrompe la risoluzione in modo controllato (utilizzato per gestione timeout).
-     * Thread-safe e può essere chiamato da thread esterni.
+     * Interrompe la risoluzione in modo controllato.
      */
     public void interrupt() {
         this.interrupted = true;
@@ -244,7 +229,7 @@ public class CDCLSolver {
     }
 
     /**
-     * Restituisce statistiche parziali durante esecuzione (utile per monitoring).
+     * Restituisce statistiche parziali durante esecuzione.
      */
     public SATStatistics getPartialStatistics() {
         SATStatistics partialStats = new SATStatistics();
@@ -257,6 +242,13 @@ public class CDCLSolver {
             partialStats.incrementConflicts();
         }
 
+        // NUOVO: Statistiche restart se abilitato
+        if (restartTechnique != null) {
+            for (int i = 0; i < restartTechnique.getTotalRestarts(); i++) {
+                partialStats.incrementRestarts();
+            }
+        }
+
         partialStats.setProofSize(proofGenerator.getStepCount());
         return partialStats;
     }
@@ -267,15 +259,6 @@ public class CDCLSolver {
 
     /**
      * Esegue il loop principale dell'algoritmo CDCL con gestione completa di tutti i casi.
-     *
-     * FLUSSO PRINCIPALE:
-     * 1. Inizializzazione livello 0 con clausole unitarie
-     * 2. Loop iterativo fino a conclusione
-     * 3. Verifica soddisfacimento prima di ogni iterazione
-     * 4. Unit propagation con gestione conflitti
-     * 5. Conflict analysis e learning quando necessario
-     * 6. Decision making se non ci sono conflitti
-     * 7. Gestione limiti iterazioni per prevenzione loop infiniti
      */
     private CDCLExecutionResult executeCDCLMainAlgorithm() throws InterruptedException {
         LOGGER.fine("=== AVVIO LOOP PRINCIPALE CDCL ===");
@@ -316,7 +299,7 @@ public class CDCLSolver {
             PropagationResult propagationResult = executeUnitPropagation();
 
             if (propagationResult.hasConflict()) {
-                // STEP 3: Conflict analysis con spiegazioni
+                // STEP 3: Conflict analysis con gestione restart integrata
                 ConflictAnalysisResult analysisResult = executeConflictAnalysis(
                         propagationResult.getConflictClause(),
                         propagationResult.getJustifyingClause()
@@ -344,7 +327,6 @@ public class CDCLSolver {
 
     /**
      * Inizializza livello 0 con tutte le clausole unitarie originali della formula.
-     * Queste clausole sono auto-giustificate e non possono essere contraddette.
      */
     private void initializeLevel0WithUnitClauses() {
         LOGGER.fine("=== INIZIALIZZAZIONE LIVELLO 0 CON CLAUSOLE UNITARIE ===");
@@ -387,7 +369,6 @@ public class CDCLSolver {
         AssignedLiteral existing = assignedValues.get(variable);
         if (existing != null && !existing.getValue().equals(expectedValue)) {
             LOGGER.severe("Conflitto immediato tra clausole unitarie per variabile: " + variable);
-            // Questo verrà gestito come UNSAT immediato nel prossimo controllo
         }
     }
 
@@ -408,212 +389,21 @@ public class CDCLSolver {
         int totalVariables = formula.getVariableCount();
         int currentLevel = decisionStack.getLevel();
 
-        LOGGER.fine(String.format("Iterazione %d - Livello: %d, Decisioni: %d, Conflitti: %d, Assegnate: %d/%d",
-                iterationCount, currentLevel, decisionCount, conflictCount, assignedCount, totalVariables));
+        String restartInfo = "";
+        if (restartTechnique != null) {
+            restartInfo = String.format(", Restart: %d", restartTechnique.getTotalRestarts());
+        }
+
+        LOGGER.fine(String.format("Iterazione %d - Livello: %d, Decisioni: %d, Conflitti: %d%s, Assegnate: %d/%d",
+                iterationCount, currentLevel, decisionCount, conflictCount, restartInfo, assignedCount, totalVariables));
     }
 
     //endregion
 
-    //region UNIT PROPAGATION E RILEVAMENTO CONFLITTI
+    //region CONFLICT ANALYSIS CON RESTART INTEGRATO
 
     /**
-     * Esegue unit propagation completa con rilevamento automatico di conflitti.
-     *
-     * ALGORITMO UNIT PROPAGATION:
-     * 1. Raccolta tutte clausole attive (originali + apprese)
-     * 2. Iterazione fino a punto fisso o conflitto
-     * 3. Per ogni clausola: valutazione stato corrente
-     * 4. Se clausola unitaria: propagazione automatica
-     * 5. Se clausola falsificata: rilevamento conflitto
-     * 6. Identificazione clausola giustificante per conflict analysis
-     *
-     * @return risultato propagazione con eventuale conflitto identificato
-     */
-    private PropagationResult executeUnitPropagation() {
-        List<List<Integer>> allActiveClauses = getAllActiveClauses();
-        boolean propagationProgress;
-        int propagationRounds = 0;
-
-        LOGGER.fine("Avvio unit propagation su " + allActiveClauses.size() + " clausole attive");
-
-        do {
-            propagationProgress = false;
-            propagationRounds++;
-
-            // Protezione contro loop infiniti nella propagazione
-            if (propagationRounds > 1000) {
-                LOGGER.warning("Unit propagation interrotta: possibile loop infinito dopo " + propagationRounds + " round");
-                break;
-            }
-
-            // Itera su tutte le clausole attive
-            for (List<Integer> clause : allActiveClauses) {
-                if (interrupted) {
-                    return PropagationResult.success();
-                }
-
-                ClauseEvaluationResult evaluation = evaluateClauseCurrentState(clause);
-
-                switch (evaluation.getStatus()) {
-                    case SATISFIED -> {
-                        // Clausola già soddisfatta - continua
-                        continue;
-                    }
-                    case FALSIFIED -> {
-                        // CONFLITTO RILEVATO - identifica clausola giustificante
-                        LOGGER.fine("Conflitto rilevato in clausola: " + clause);
-                        List<Integer> justifyingClause = findJustifyingClauseForConflict(clause);
-                        return PropagationResult.conflict(clause, justifyingClause);
-                    }
-                    case UNIT -> {
-                        // PROPAGAZIONE UNITARIA - assegna letterale libero
-                        if (propagateUnitClause(clause, evaluation.getUnitLiteral())) {
-                            propagationProgress = true;
-                            LOGGER.finest("Propagazione unitaria: " + evaluation.getUnitLiteral() + " da " + clause);
-                        }
-                    }
-                    case UNRESOLVED -> {
-                        // Clausola con multiple variabili libere - continua
-                        continue;
-                    }
-                }
-            }
-
-            LOGGER.finest("Round propagazione " + propagationRounds + " - progresso: " + propagationProgress);
-
-        } while (propagationProgress && !interrupted);
-
-        LOGGER.fine("Unit propagation completata dopo " + propagationRounds + " round");
-        return PropagationResult.success();
-    }
-
-    /**
-     * Raccoglie tutte le clausole attive (originali della formula + clausole apprese).
-     */
-    private List<List<Integer>> getAllActiveClauses() {
-        List<List<Integer>> allClauses = new ArrayList<>(formula.getClauses());
-        allClauses.addAll(learnedClauses);
-        return allClauses;
-    }
-
-    /**
-     * Valuta lo stato corrente di una clausola rispetto agli assegnamenti attuali.
-     *
-     * STATI POSSIBILI:
-     * • SATISFIED: Almeno un letterale è vero → clausola soddisfatta
-     * • FALSIFIED: Tutti i letterali sono falsi → conflitto
-     * • UNIT: Un solo letterale non assegnato, altri falsi → propagazione
-     * • UNRESOLVED: Multiple letterali non assegnati → nessuna azione
-     */
-    private ClauseEvaluationResult evaluateClauseCurrentState(List<Integer> clause) {
-        int unassignedCount = 0;
-        Integer unassignedLiteral = null;
-
-        for (Integer literal : clause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
-
-            if (assignment == null) {
-                // Letterale non ancora assegnato
-                unassignedCount++;
-                unassignedLiteral = literal;
-            } else {
-                // Calcola valore effettivo del letterale
-                boolean literalValue = assignment.getValue();
-                if (literal < 0) {
-                    literalValue = !literalValue; // Applica negazione
-                }
-
-                if (literalValue) {
-                    // Letterale vero → clausola automaticamente soddisfatta
-                    return ClauseEvaluationResult.satisfied();
-                }
-                // Se letterale falso, continua a controllare gli altri
-            }
-        }
-
-        // Determina stato finale basato su letterali non assegnati
-        return switch (unassignedCount) {
-            case 0 -> ClauseEvaluationResult.falsified(); // Tutti falsi = conflitto
-            case 1 -> ClauseEvaluationResult.unit(unassignedLiteral); // Unit clause
-            default -> ClauseEvaluationResult.unresolved(); // Multiple non assegnati
-        };
-    }
-
-    /**
-     * Propaga clausola unitaria assegnando l'unico letterale libero.
-     *
-     * @param clause clausola unitaria da propagare
-     * @param unitLiteral unico letterale non assegnato nella clausola
-     * @return true se propagazione effettuata, false se letterale già assegnato
-     */
-    private boolean propagateUnitClause(List<Integer> clause, Integer unitLiteral) {
-        Integer variable = Math.abs(unitLiteral);
-        Boolean value = unitLiteral > 0;
-
-        // Verifica se variabile già assegnata
-        AssignedLiteral existingAssignment = assignedValues.get(variable);
-        if (existingAssignment != null) {
-            return false; // Già assegnata, nessuna propagazione
-        }
-
-        // Crea e registra nuovo assegnamento di implicazione
-        AssignedLiteral newImplication = new AssignedLiteral(variable, value, false, clause);
-        assignedValues.put(variable, newImplication);
-        decisionStack.addImpliedLiteral(variable, value, clause);
-        statistics.incrementPropagations();
-
-        LOGGER.fine("Propagazione unitaria eseguita: " + variable + " = " + value + " derivata da " + clause);
-        return true;
-    }
-
-    /**
-     * Identifica la clausola che ha giustificato l'ultima propagazione coinvolta nel conflitto.
-     * Utilizzata per conflict analysis accurato e generazione spiegazioni.
-     */
-    private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
-        AssignedLiteral mostRecentPropagation = null;
-        int highestLevel = -1;
-
-        // Trova l'implicazione più recente tra i letterali del conflitto
-        for (Integer literal : conflictClause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
-
-            if (assignment != null && assignment.isImplication()) {
-                int assignmentLevel = findVariableLevel(variable);
-                if (assignmentLevel >= highestLevel) {
-                    highestLevel = assignmentLevel;
-                    mostRecentPropagation = assignment;
-                }
-            }
-        }
-
-        return mostRecentPropagation != null ? mostRecentPropagation.getAncestorClause() : null;
-    }
-
-    //endregion
-
-    //region CONFLICT ANALYSIS E GENERAZIONE SPIEGAZIONI
-
-    /**
-     * Esegue conflict analysis completo con generazione spiegazioni matematicamente corrette.
-     *
-     * TIPI DI CONFLITTO GESTITI:
-     * 1. Conflitto normale: tra clausola giustificante e clausola di conflitto
-     * 2. Conflitto diretto: clausola completamente falsificata
-     * 3. Conflitti livello 0: richiedono spiegazioni sequenziali speciali
-     *
-     * PROCESSO ANALISI:
-     * 1. Classificazione tipo conflitto
-     * 2. Generazione spiegazione appropriata
-     * 3. Verifica derivazione clausola vuota (UNSAT)
-     * 4. Calcolo livello backtrack ottimale
-     * 5. Aggiornamento contatori VSIDS
-     *
-     * @param conflictClause clausola che ha generato il conflitto
-     * @param justifyingClause clausola che ha causato l'ultima propagazione (null se conflitto diretto)
-     * @return risultato analisi con clausola appresa e livello backtrack
+     * Esegue conflict analysis completo con gestione restart opzionale.
      */
     private ConflictAnalysisResult executeConflictAnalysis(List<Integer> conflictClause,
                                                            List<Integer> justifyingClause) {
@@ -628,15 +418,120 @@ public class CDCLSolver {
         // Aggiorna contatori VSIDS per migliorare euristica futura
         updateVSIDSCountersAfterConflict(conflictClause);
 
+        // NUOVO: Gestione restart se abilitato
+        if (restartTechnique != null) {
+            boolean shouldRestart = restartTechnique.registerConflictAndCheckRestart();
+
+            if (shouldRestart) {
+                // Esegue conflict analysis normale prima del restart
+                ConflictAnalysisResult normalResult = performNormalConflictAnalysis(conflictClause, justifyingClause);
+
+                // Se UNSAT, non esegue restart
+                if (normalResult.isUnsatisfiable()) {
+                    LOGGER.info("Formula UNSAT determinata - restart non necessario");
+                    return normalResult;
+                }
+
+                // Esegue restart e ritorna risultato speciale
+                return executeRestartProcedure(normalResult);
+            }
+        }
+
+        // Conflict analysis normale senza restart
+        return performNormalConflictAnalysis(conflictClause, justifyingClause);
+    }
+
+    /**
+     * Esegue conflict analysis normale (esistente).
+     */
+    private ConflictAnalysisResult performNormalConflictAnalysis(List<Integer> conflictClause,
+                                                                 List<Integer> justifyingClause) {
         // Determina tipo di conflitto e strategia di analisi
         if (justifyingClause != null) {
-            // CASO 1: Conflitto normale con spiegazione tra clausole
             return analyzeNormalConflictWithExplanation(conflictClause, justifyingClause);
         } else {
-            // CASO 2: Conflitto diretto (clausola completamente falsificata)
             return analyzeDirectConflict(conflictClause);
         }
     }
+
+    /**
+     * NUOVO: Esegue procedura restart completa.
+     */
+    private ConflictAnalysisResult executeRestartProcedure(ConflictAnalysisResult normalResult) {
+        LOGGER.info("=== ESECUZIONE RESTART PROCEDURA ===");
+
+        try {
+            // Prepara dati per restart
+            List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
+            List<List<Integer>> currentLearnedClauses = new ArrayList<>(learnedClauses);
+
+            // Apprendi clausola dal conflict analysis normale
+            if (normalResult.getLearnedClause() != null && !normalResult.getLearnedClause().isEmpty()) {
+                learnClauseIfNovel(normalResult.getLearnedClause());
+                currentLearnedClauses.add(normalResult.getLearnedClause());
+            }
+
+            // Esegue restart
+            RestartTechnique.RestartResult restartResult = restartTechnique.executeRestart(
+                    level0Assignments, currentLearnedClauses);
+
+            // Aggiorna statistiche
+            statistics.incrementRestarts();
+
+            // Esegue backtrack al livello 0
+            performRestartBacktrack();
+
+            // Aggiorna clausole apprese con quelle ottimizzate
+            updateLearnedClausesFromRestart(restartResult);
+
+            LOGGER.info("Restart #" + restartResult.restartNumber + " completato");
+            LOGGER.info("Sussunzione: " + restartResult.subsumptionRemovals + " clausole rimosse");
+
+            // Ritorna segnale di continuazione normale
+            return ConflictAnalysisResult.backtrack(Collections.emptyList(), 0);
+
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Errore durante restart", e);
+            // Fallback: continua con backtrack normale
+            return normalResult;
+        }
+    }
+
+    /**
+     * Esegue backtrack al livello 0 per restart.
+     */
+    private void performRestartBacktrack() {
+        int currentLevel = decisionStack.getLevel();
+        int removedAssignments = 0;
+
+        // Rimuove tutti i livelli superiori al livello 0
+        while (decisionStack.getLevel() > 0) {
+            List<AssignedLiteral> removedLevel = decisionStack.deleteLevel();
+
+            // Annulla assegnamenti rimossi
+            for (AssignedLiteral assignment : removedLevel) {
+                assignedValues.put(assignment.getVariable(), null);
+                removedAssignments++;
+            }
+        }
+
+        LOGGER.info("Restart backtrack: " + removedAssignments + " assegnamenti eliminati, livello: " + decisionStack.getLevel());
+    }
+
+    /**
+     * Aggiorna clausole apprese con quelle ottimizzate dal restart.
+     */
+    private void updateLearnedClausesFromRestart(RestartTechnique.RestartResult restartResult) {
+        // Sostituisce clausole apprese con quelle ottimizzate
+        learnedClauses.clear();
+        learnedClauses.addAll(restartResult.optimizedLearnedClauses);
+
+        LOGGER.fine("Clausole apprese aggiornate post-restart: " + learnedClauses.size());
+    }
+
+    //endregion
+
+    //region CONFLICT ANALYSIS METODI ESISTENTI
 
     /**
      * Analizza conflitto normale generando spiegazione tra clausola giustificante e conflitto.
@@ -726,7 +621,6 @@ public class CDCLSolver {
 
     /**
      * Esegue spiegazioni sequenziali per risoluzione conflitti al livello 0.
-     * Processo iterativo che consuma letterali uno alla volta fino a clausola vuota.
      */
     private ConflictAnalysisResult executeSequentialExplanationsForLevel0(List<Integer> initialClause) {
         LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 ===");
@@ -734,7 +628,7 @@ public class CDCLSolver {
 
         List<Integer> currentClause = new ArrayList<>(initialClause);
         int explanationSteps = 0;
-        final int MAX_EXPLANATION_STEPS = 100; // Protezione loop infiniti
+        final int MAX_EXPLANATION_STEPS = 100;
 
         while (!currentClause.isEmpty() && explanationSteps < MAX_EXPLANATION_STEPS) {
             explanationSteps++;
@@ -781,7 +675,6 @@ public class CDCLSolver {
 
     /**
      * Trova il prossimo letterale da consumare nelle spiegazioni sequenziali.
-     * Seleziona letterale in conflitto con assegnamenti livello 0.
      */
     private Integer findNextLiteralToConsume(List<Integer> clause) {
         for (Integer literal : clause) {
@@ -822,11 +715,6 @@ public class CDCLSolver {
 
     /**
      * Genera spiegazione matematica tra due clausole applicando risoluzione.
-     *
-     * ALGORITMO RISOLUZIONE:
-     * 1. Unisce letterali da entrambe le clausole
-     * 2. Elimina coppie di letterali complementari (X e ¬X)
-     * 3. Restituisce clausola risultante
      */
     private List<Integer> generateMathematicalExplanation(List<Integer> clause1, List<Integer> clause2) {
         LOGGER.finest("Generazione spiegazione matematica: " + clause1 + " ⊕ " + clause2);
@@ -906,11 +794,9 @@ public class CDCLSolver {
 
     /**
      * Trova livello appropriato dove clausola appresa diventa assertiva.
-     * Clausola assertiva: un solo letterale non assegnato, altri falsi.
      */
     private int findAssertionLevel(List<Integer> learnedClause) {
         int currentLevel = decisionStack.getLevel();
-
         // Strategia semplificata: backtrack di un livello per permettere assertion
         return Math.max(0, currentLevel - 1);
     }
@@ -922,7 +808,6 @@ public class CDCLSolver {
         for (Integer literal : conflictClause) {
             vsidsCounter.merge(literal, 1, Integer::sum);
         }
-
         LOGGER.finest("Contatori VSIDS aggiornati per conflitto: " + conflictClause);
     }
 
@@ -932,14 +817,6 @@ public class CDCLSolver {
 
     /**
      * Esegue learning di clausole e backtracking non-cronologico.
-     *
-     * PROCESSO COMPLETO:
-     * 1. Apprendimento clausola derivata da conflict analysis
-     * 2. Esecuzione backtracking al livello calcolato
-     * 3. Applicazione assertion della clausola appresa se unitaria
-     * 4. Aggiornamento statistiche di learning
-     *
-     * @param analysisResult risultato del conflict analysis
      */
     private void executeLearningAndBacktrack(ConflictAnalysisResult analysisResult) {
         List<Integer> learnedClause = analysisResult.getLearnedClause();
@@ -948,13 +825,19 @@ public class CDCLSolver {
         LOGGER.fine("Learning e backtrack: clausola=" + learnedClause + ", livello=" + backtrackLevel);
 
         // Step 1: Apprendi clausola se non duplicata
-        learnClauseIfNovel(learnedClause);
+        if (!learnedClause.isEmpty()) {
+            learnClauseIfNovel(learnedClause);
+        }
 
         // Step 2: Esegui backtracking
-        performBacktrackToLevel(backtrackLevel);
+        if (!learnedClause.isEmpty() || backtrackLevel > 0) {
+            performBacktrackToLevel(backtrackLevel);
+        }
 
         // Step 3: Applica assertion se clausola unitaria
-        applyAssertionIfUnit(learnedClause, backtrackLevel);
+        if (!learnedClause.isEmpty()) {
+            applyAssertionIfUnit(learnedClause, backtrackLevel);
+        }
     }
 
     /**
@@ -1056,17 +939,169 @@ public class CDCLSolver {
 
     //endregion
 
+    //region UNIT PROPAGATION E RILEVAMENTO CONFLITTI
+
+    /**
+     * Esegue unit propagation completa con rilevamento automatico di conflitti.
+     */
+    private PropagationResult executeUnitPropagation() {
+        List<List<Integer>> allActiveClauses = getAllActiveClauses();
+        boolean propagationProgress;
+        int propagationRounds = 0;
+
+        LOGGER.fine("Avvio unit propagation su " + allActiveClauses.size() + " clausole attive");
+
+        do {
+            propagationProgress = false;
+            propagationRounds++;
+
+            // Protezione contro loop infiniti nella propagazione
+            if (propagationRounds > 1000) {
+                LOGGER.warning("Unit propagation interrotta: possibile loop infinito dopo " + propagationRounds + " round");
+                break;
+            }
+
+            // Itera su tutte le clausole attive
+            for (List<Integer> clause : allActiveClauses) {
+                if (interrupted) {
+                    return PropagationResult.success();
+                }
+
+                ClauseEvaluationResult evaluation = evaluateClauseCurrentState(clause);
+
+                switch (evaluation.getStatus()) {
+                    case SATISFIED -> {
+                        // Clausola già soddisfatta - continua
+                        continue;
+                    }
+                    case FALSIFIED -> {
+                        // CONFLITTO RILEVATO - identifica clausola giustificante
+                        LOGGER.fine("Conflitto rilevato in clausola: " + clause);
+                        List<Integer> justifyingClause = findJustifyingClauseForConflict(clause);
+                        return PropagationResult.conflict(clause, justifyingClause);
+                    }
+                    case UNIT -> {
+                        // PROPAGAZIONE UNITARIA - assegna letterale libero
+                        if (propagateUnitClause(clause, evaluation.getUnitLiteral())) {
+                            propagationProgress = true;
+                            LOGGER.finest("Propagazione unitaria: " + evaluation.getUnitLiteral() + " da " + clause);
+                        }
+                    }
+                    case UNRESOLVED -> {
+                        // Clausola con multiple variabili libere - continua
+                        continue;
+                    }
+                }
+            }
+
+            LOGGER.finest("Round propagazione " + propagationRounds + " - progresso: " + propagationProgress);
+
+        } while (propagationProgress && !interrupted);
+
+        LOGGER.fine("Unit propagation completata dopo " + propagationRounds + " round");
+        return PropagationResult.success();
+    }
+
+    /**
+     * Raccoglie tutte le clausole attive (originali della formula + clausole apprese).
+     */
+    private List<List<Integer>> getAllActiveClauses() {
+        List<List<Integer>> allClauses = new ArrayList<>(formula.getClauses());
+        allClauses.addAll(learnedClauses);
+        return allClauses;
+    }
+
+    /**
+     * Valuta lo stato corrente di una clausola rispetto agli assegnamenti attuali.
+     */
+    private ClauseEvaluationResult evaluateClauseCurrentState(List<Integer> clause) {
+        int unassignedCount = 0;
+        Integer unassignedLiteral = null;
+
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment == null) {
+                // Letterale non ancora assegnato
+                unassignedCount++;
+                unassignedLiteral = literal;
+            } else {
+                // Calcola valore effettivo del letterale
+                boolean literalValue = assignment.getValue();
+                if (literal < 0) {
+                    literalValue = !literalValue; // Applica negazione
+                }
+
+                if (literalValue) {
+                    // Letterale vero → clausola automaticamente soddisfatta
+                    return ClauseEvaluationResult.satisfied();
+                }
+                // Se letterale falso, continua a controllare gli altri
+            }
+        }
+
+        // Determina stato finale basato su letterali non assegnati
+        return switch (unassignedCount) {
+            case 0 -> ClauseEvaluationResult.falsified(); // Tutti falsi = conflitto
+            case 1 -> ClauseEvaluationResult.unit(unassignedLiteral); // Unit clause
+            default -> ClauseEvaluationResult.unresolved(); // Multiple non assegnati
+        };
+    }
+
+    /**
+     * Propaga clausola unitaria assegnando l'unico letterale libero.
+     */
+    private boolean propagateUnitClause(List<Integer> clause, Integer unitLiteral) {
+        Integer variable = Math.abs(unitLiteral);
+        Boolean value = unitLiteral > 0;
+
+        // Verifica se variabile già assegnata
+        AssignedLiteral existingAssignment = assignedValues.get(variable);
+        if (existingAssignment != null) {
+            return false; // Già assegnata, nessuna propagazione
+        }
+
+        // Crea e registra nuovo assegnamento di implicazione
+        AssignedLiteral newImplication = new AssignedLiteral(variable, value, false, clause);
+        assignedValues.put(variable, newImplication);
+        decisionStack.addImpliedLiteral(variable, value, clause);
+        statistics.incrementPropagations();
+
+        LOGGER.fine("Propagazione unitaria eseguita: " + variable + " = " + value + " derivata da " + clause);
+        return true;
+    }
+
+    /**
+     * Identifica la clausola che ha giustificato l'ultima propagazione coinvolta nel conflitto.
+     */
+    private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
+        AssignedLiteral mostRecentPropagation = null;
+        int highestLevel = -1;
+
+        // Trova l'implicazione più recente tra i letterali del conflitto
+        for (Integer literal : conflictClause) {
+            Integer variable = Math.abs(literal);
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment != null && assignment.isImplication()) {
+                int assignmentLevel = findVariableLevel(variable);
+                if (assignmentLevel >= highestLevel) {
+                    highestLevel = assignmentLevel;
+                    mostRecentPropagation = assignment;
+                }
+            }
+        }
+
+        return mostRecentPropagation != null ? mostRecentPropagation.getAncestorClause() : null;
+    }
+
+    //endregion
+
     //region DECISION MAKING E EURISTICA VSIDS
 
     /**
      * Esegue decision making con euristica VSIDS avanzata.
-     *
-     * PROCESSO DECISION MAKING:
-     * 1. Selezione variabile con euristica VSIDS (più attiva nei conflitti)
-     * 2. Scelta polarità basata su frequenza letterali positivi/negativi
-     * 3. Creazione nuovo livello di decisione nello stack
-     * 4. Registrazione assegnamento decisionale
-     * 5. Aggiornamento statistiche decisioni
      */
     private void executeDecisionMaking() {
         LOGGER.fine("Avvio decision making con euristica VSIDS");
@@ -1090,7 +1125,6 @@ public class CDCLSolver {
 
     /**
      * Seleziona polarità ottimale per variabile basata su contatori VSIDS.
-     * Sceglie polarità che appare più frequentemente nei conflitti.
      */
     private Boolean selectOptimalPolarity(Integer variable) {
         Integer positiveCount = vsidsCounter.getOrDefault(variable, 0);
@@ -1128,12 +1162,6 @@ public class CDCLSolver {
 
     /**
      * Verifica se la formula è completamente soddisfatta con assegnamenti correnti.
-     *
-     * PROCESSO VERIFICA:
-     * 1. Controllo completezza assegnamenti (tutte variabili assegnate)
-     * 2. Verifica soddisfacimento clausole originali
-     * 3. Verifica soddisfacimento clausole apprese
-     * 4. Conclusione SAT solo se tutto soddisfatto
      */
     private boolean isFormulaSatisfied() {
         // Verifica preliminare: tutte le variabili devono essere assegnate
@@ -1198,7 +1226,7 @@ public class CDCLSolver {
                 return level;
             }
         }
-        return -1; // Variabile non trovata (non dovrebbe accadere)
+        return -1; // Variabile non trovata
     }
 
     //endregion
@@ -1295,6 +1323,13 @@ public class CDCLSolver {
         LOGGER.info("=== STATISTICHE FINALI CDCL ===");
         LOGGER.info("Decisioni totali: " + decisionCount);
         LOGGER.info("Conflitti rilevati: " + conflictCount);
+
+        // NUOVO: Log statistiche restart se abilitato
+        if (restartTechnique != null) {
+            LOGGER.info("Restart eseguiti: " + restartTechnique.getTotalRestarts());
+            LOGGER.info("Sussunzione rimozioni: " + restartTechnique.getTotalSubsumptionRemovals());
+        }
+
         LOGGER.info("Clausole apprese: " + learnedClauses.size());
         LOGGER.info("Tempo esecuzione: " + statistics.getExecutionTimeMs() + " ms");
         LOGGER.info("Variabili formula: " + formula.getVariableCount());
@@ -1310,11 +1345,42 @@ public class CDCLSolver {
             double learningRate = (double) learnedClauses.size() / conflictCount;
             LOGGER.info("Efficacia learning: " + String.format("%.2f", learningRate) + " clausole/conflitto");
         }
+
+        // NUOVO: Statistiche restart se disponibili
+        if (restartTechnique != null && restartTechnique.getTotalRestarts() > 0) {
+            double restartRate = (double) conflictCount / restartTechnique.getTotalRestarts();
+            LOGGER.info("Frequenza restart: " + String.format("%.1f", restartRate) + " conflitti/restart");
+
+            double subsumptionRate = (double) restartTechnique.getTotalSubsumptionRemovals() / restartTechnique.getTotalRestarts();
+            LOGGER.info("Efficacia sussunzione: " + String.format("%.1f", subsumptionRate) + " rimozioni/restart");
+        }
     }
 
     //endregion
 
-    //region CLASSI DI SUPPORTO E RISULTATI
+    //region INTERFACCIA PUBBLICA RESTART
+
+    /**
+     * NUOVO: Restituisce statistiche restart se abilitato.
+     */
+    public String getRestartStatistics() {
+        if (restartTechnique != null) {
+            return restartTechnique.getRestartStatistics();
+        } else {
+            return "Restart non abilitato per questa istanza del solver.";
+        }
+    }
+
+    /**
+     * NUOVO: Verifica se restart è abilitato.
+     */
+    public boolean isRestartEnabled() {
+        return restartTechnique != null;
+    }
+
+    //endregion
+
+    //region CLASSI DI SUPPORTO
 
     /**
      * Risultato dell'esecuzione completa dell'algoritmo CDCL.
@@ -1416,7 +1482,7 @@ public class CDCLSolver {
         public int getBacktrackLevel() { return backtrackLevel; }
 
         public static ConflictAnalysisResult unsatisfiable() {
-            return new ConflictAnalysisResult(true, null, -1);
+            return new ConflictAnalysisResult(true, Collections.emptyList(), -1);
         }
 
         public static ConflictAnalysisResult backtrack(List<Integer> learnedClause, int level) {

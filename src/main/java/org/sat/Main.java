@@ -38,10 +38,10 @@ import java.util.stream.Stream;
  * - Unit propagation con rilevamento conflitti
  * - Trasformazione di Tseitin per E-CNF equisoddisfacibili
  * - Principio di sussunzione per eliminazione clausole ridondanti
+ * - Tecnica restart per prevenzione stalli (NUOVO)
  *
  * @author Amos Lo Verde
- * @version 1.7.2
- *
+ * @version 1.8.0
  */
 public final class Main {
 
@@ -196,7 +196,7 @@ public final class Main {
      * 1. Lettura e parsing formula logica
      * 2. Conversione in CNF standard
      * 3. Applicazione ottimizzazioni opzionali (Tseitin, Sussunzione)
-     * 4. Risoluzione SAT con algoritmo CDCL
+     * 4. Risoluzione SAT con algoritmo CDCL (con restart opzionale)
      * 5. Generazione output strutturato (risultati, prove, statistiche)
      *
      * @param config configurazione completa elaborazione
@@ -213,8 +213,8 @@ public final class Main {
             // Pipeline di conversione formula
             FormulaProcessingResult formulaResult = processFormulaConversionPipeline(config);
 
-            // Risoluzione SAT con timeout
-            SATResult satResult = executeSATSolving(formulaResult.finalFormula, config.timeoutSeconds);
+            // Risoluzione SAT con timeout e restart
+            SATResult satResult = executeSATSolving(formulaResult.finalFormula, config.timeoutSeconds, config.useRestart);
 
             // Gestione risultato finale
             if (satResult == null) {
@@ -277,6 +277,11 @@ public final class Main {
     private static void handleSuccessfulResult(SATResult satResult, FormulaProcessingResult formulaResult, Configuration config) throws IOException {
         saveCompleteResults(satResult, formulaResult.finalFormula, config.inputPath, config.outputPath, formulaResult.conversionInfo, config);
         displayFinalStatistics(satResult, formulaResult.finalFormula);
+
+        // NUOVO: Salva statistiche restart se abilitato
+        if (config.useRestart && satResult.getStatistics().getRestarts() > 0) {
+            saveRestartStatistics(satResult, config.inputPath, config.outputPath);
+        }
     }
 
     /**
@@ -375,13 +380,15 @@ public final class Main {
      *
      * @param cnfFormula formula CNF da risolvere
      * @param timeoutSeconds timeout massimo in secondi
+     * @param useRestart flag per abilitare tecnica restart
      * @return risultato SAT o null se timeout
      */
-    private static SATResult executeSATSolving(CNFConverter cnfFormula, int timeoutSeconds) {
-        System.out.println("4. Risoluzione SAT con CDCL (timeout: " + timeoutSeconds + "s)...");
+    private static SATResult executeSATSolving(CNFConverter cnfFormula, int timeoutSeconds, boolean useRestart) {
+        String restartInfo = useRestart ? " con restart" : "";
+        System.out.println("4. Risoluzione SAT con CDCL" + restartInfo + " (timeout: " + timeoutSeconds + "s)...");
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        CDCLSolver solver = new CDCLSolver(cnfFormula);
+        CDCLSolver solver = new CDCLSolver(cnfFormula, useRestart);
 
         try {
             Callable<SATResult> solverTask = solver::solve;
@@ -399,6 +406,11 @@ public final class Main {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    // Overload per compatibilità
+    private static SATResult executeSATSolving(CNFConverter cnfFormula, int timeoutSeconds) {
+        return executeSATSolving(cnfFormula, timeoutSeconds, false);
     }
 
     //endregion
@@ -584,6 +596,72 @@ public final class Main {
     }
 
     /**
+     * NUOVO: Salva statistiche dettagliate restart in directory STATS/RESTART.
+     */
+    private static void saveRestartStatistics(SATResult result, String originalFilePath, String outputPath) throws IOException {
+        System.out.println("5a. Salvataggio statistiche restart...");
+
+        Path restartStatsDir = getStatsDirectory(originalFilePath, outputPath).resolve("RESTART");
+        Files.createDirectories(restartStatsDir);
+
+        String baseFileName = getBaseFileName(originalFilePath);
+        Path statsFilePath = restartStatsDir.resolve(baseFileName + ".stats");
+
+        try (FileWriter writer = new FileWriter(statsFilePath.toFile())) {
+            writeRestartStatistics(writer, result);
+        }
+
+        LOGGER.info("Statistiche restart salvate: " + statsFilePath);
+    }
+
+    /**
+     * NUOVO: Scrive statistiche restart dettagliate nel file.
+     */
+    private static void writeRestartStatistics(FileWriter writer, SATResult result) throws IOException {
+        SATStatistics stats = result.getStatistics();
+
+        writer.write("=================================\n");
+        writer.write("| STATISTICHE TECNICA RESTART  |\n");
+        writer.write("=================================\n\n");
+
+        // Statistiche generali
+        writer.write("STATISTICHE GENERALI:\n");
+        writer.write("- Restart eseguiti: " + stats.getRestarts() + "\n");
+        writer.write("- Conflitti totali: " + stats.getConflicts() + "\n");
+        writer.write("- Decisioni totali: " + stats.getDecisions() + "\n");
+        writer.write("- Clausole apprese: " + stats.getLearnedClauses() + "\n");
+
+        if (stats.getRestarts() > 0) {
+            double conflictsPerRestart = (double) stats.getConflicts() / stats.getRestarts();
+            writer.write("- Media conflitti per restart: " + String.format("%.1f", conflictsPerRestart) + "\n");
+        }
+
+        writer.write("\n");
+
+        // Informazioni tecniche
+        writer.write("INFORMAZIONI TECNICHE:\n");
+        writer.write("- Soglia restart: 5 conflitti\n");
+        writer.write("- Sussunzione post-restart: ATTIVA\n");
+        writer.write("- Preservazione livello 0: ATTIVA\n");
+        writer.write("- Preservazione clausole apprese: ATTIVA\n");
+
+        writer.write("\n");
+
+        // Performance impact
+        writer.write("IMPATTO PERFORMANCE:\n");
+        if (stats.getRestarts() > 0) {
+            writer.write("- Restart utilizzati per evitare stalli\n");
+            writer.write("- Sussunzione applicata " + stats.getRestarts() + " volte\n");
+            writer.write("- Formula ottimizzata ad ogni restart\n");
+        } else {
+            writer.write("- Nessun restart necessario\n");
+            writer.write("- Risoluzione completata senza stalli\n");
+        }
+
+        writer.write("\n=================================\n");
+    }
+
+    /**
      * Salva file di riepilogo delle opzioni attive durante elaborazione.
      */
     private static void saveActiveOptionsFile(Configuration config, String originalFilePath, String outputPath) throws IOException {
@@ -615,7 +693,7 @@ public final class Main {
                     writer.write("- WATCHED_LITERALS (flag <w>): Ottimizzazione unit propagation con letterali osservati.\n");
                 }
                 if (config.useRestart) {
-                    writer.write("- RESTART (flag <r>): Tecniche di riavvio per evitare stalli durante la ricerca.\n");
+                    writer.write("- RESTART (flag <r>): Tecniche di riavvio ogni 5 conflitti con sussunzione automatica.\n");
                 }
             }
 
@@ -663,6 +741,12 @@ public final class Main {
             writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + getBaseFileName(originalFilePath) + ".cnf\n");
         }
 
+        // Informazioni ottimizzazioni attive
+        List<String> activeOpts = buildActiveOptimizationsList(config);
+        if (!activeOpts.isEmpty()) {
+            writer.write("-> Ottimizzazioni: " + String.join(", ", activeOpts) + "\n");
+        }
+
         writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
 
         // Contenuto principale
@@ -679,6 +763,16 @@ public final class Main {
         writer.write("Conflitti: " + stats.getConflicts() + "\n");
         writer.write("Propagazioni: " + stats.getPropagations() + "\n");
         writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
+
+        // Informazioni restart se utilizzato
+        if (config.useRestart) {
+            writer.write("Restart eseguiti: " + stats.getRestarts() + "\n");
+            if (stats.getRestarts() > 0) {
+                double avgConflicts = (double) stats.getConflicts() / stats.getRestarts();
+                writer.write("Media conflitti/restart: " + String.format("%.1f", avgConflicts) + "\n");
+            }
+        }
+
         writer.write("Tempo risoluzione: " + stats.getExecutionTimeMs() + " ms\n");
     }
 
@@ -751,6 +845,12 @@ public final class Main {
                 writer.write("\nÈ stato utilizzato il solutore SAT sulla formula presente in " + baseFileName + ".cnf\n");
             }
 
+            // Informazioni ottimizzazioni attive
+            List<String> activeOpts = buildActiveOptimizationsList(config);
+            if (!activeOpts.isEmpty()) {
+                writer.write("-> Ottimizzazioni: " + String.join(", ", activeOpts) + "\n");
+            }
+
             writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
             writer.write("La risoluzione ha superato il tempo limite di " + timeoutSeconds + " secondi.\n");
             writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
@@ -758,6 +858,11 @@ public final class Main {
             writer.write("Conflitti: N/A\n");
             writer.write("Propagazioni: N/A\n");
             writer.write("Clausole apprese: N/A\n");
+
+            if (config.useRestart) {
+                writer.write("Restart eseguiti: N/A\n");
+            }
+
             writer.write("Tempo risoluzione: TIMEOUT\n");
         }
     }
@@ -923,7 +1028,7 @@ public final class Main {
      * Visualizza informazioni di help complete con esempi di utilizzo.
      */
     private static void printHelp() {
-        System.out.println("\n=== SOLUTORE SAT CDCL v2.1.0 ===");
+        System.out.println("\n=== SOLUTORE SAT CDCL v1.8.0 ===");
         System.out.println("Solutore per problemi di soddisfacibilità booleana (SAT)");
         System.out.println("con algoritmo CDCL (Conflict-Driven Clause Learning)\n");
 
@@ -939,18 +1044,19 @@ public final class Main {
         System.out.println("  -opt=<flags>    Attiva ottimizzazioni specifiche:");
         System.out.println("                  s = Principio di sussunzione");
         System.out.println("                  w = Watched literals (futuro)");
-        System.out.println("                  r = Tecniche di restart (futuro)");
+        System.out.println("                  r = Tecniche di restart (ogni 5 conflitti)");
         System.out.println("                  t = Trasformazione di Tseitin");
         System.out.println("                  all = Tutte le ottimizzazioni");
         System.out.println("  -h              Mostra questa guida\n");
 
         System.out.println("ESEMPI:");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt");
-        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=t");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=r");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=st");
+        System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=str");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=all");
-        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30 -opt=s");
-        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -opt=sr -t 60\n");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -o ./risultati/ -t 30 -opt=sr");
+        System.out.println("  java -jar solutore_SAT.jar -d ./formule/ -opt=rt -t 60\n");
 
         System.out.println("NOTE:");
         System.out.println("  • Le opzioni -f e -d sono mutuamente esclusive");
@@ -958,10 +1064,11 @@ public final class Main {
         System.out.println("  • Output automatico: file .cnf e .result nelle directory CNF/ e RESULT/");
         System.out.println("  • Con ottimizzazioni attive:");
         System.out.println("    - File .ecnf nella directory E-CNF/ (con -opt=t)");
-        System.out.println("    - Statistiche organizzate in STATS/TSEITIN/ e STATS/SUBSUMPTION/");
+        System.out.println("    - Statistiche organizzate in STATS/TSEITIN/, STATS/SUBSUMPTION/, STATS/RESTART/");
         System.out.println("    - File opzioni_attive.txt nella directory STATS/");
         System.out.println("  • Tseitin è raccomandato per formule complesse (>8 operatori)");
-        System.out.println("  • Sussunzione elimina clausole ridondanti che sono sovrainsieme di altre\n");
+        System.out.println("  • Sussunzione elimina clausole ridondanti che sono sovrainsieme di altre");
+        System.out.println("  • Restart applica reinizio ogni 5 conflitti con sussunzione automatica\n");
         System.out.println("=====================================\n");
     }
 
