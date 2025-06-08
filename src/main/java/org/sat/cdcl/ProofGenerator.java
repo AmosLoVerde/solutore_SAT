@@ -220,7 +220,7 @@ public class ProofGenerator {
      */
     private String formatClauseForLogging(List<Integer> clause) {
         if (clause == null || clause.isEmpty()) {
-            return "[]\n";
+            return "[]";
         }
         return clause.toString();
     }
@@ -347,7 +347,7 @@ public class ProofGenerator {
         }
 
         if (clause.isEmpty()) {
-            return "[]\n";
+            return "[]";
         }
 
         // Clausola unitaria - formato semplificato
