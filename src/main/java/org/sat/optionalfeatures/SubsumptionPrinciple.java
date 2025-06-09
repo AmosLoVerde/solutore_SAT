@@ -335,14 +335,14 @@ public class SubsumptionPrinciple {
                     clausesToEliminate.add(j);
                     eliminatedClausesCount++;
 
-                    logSubsumptionFound(clauseA, clauseB, "A sussume B");
+                    logSubsumptionFound(clauseA, clauseB);
 
                 } else if (checkSubsumption(clauseB, clauseA)) {
                     // clauseB sussume clauseA → elimina clauseA (più generale)
                     clausesToEliminate.add(i);
                     eliminatedClausesCount++;
 
-                    logSubsumptionFound(clauseB, clauseA, "B sussume A");
+                    logSubsumptionFound(clauseB, clauseA);
                     break; // clauseA eliminata, passa alla successiva
                 }
             }
@@ -386,10 +386,10 @@ public class SubsumptionPrinciple {
     /**
      * Log dettagliato di sussunzione trovata per tracciabilità.
      */
-    private void logSubsumptionFound(Set<String> sussumente, Set<String> sussumeta, String description) {
+    private void logSubsumptionFound(Set<String> sussumente, Set<String> sussumeta) {
         optimizationLog.append("SUSSUNZIONE: ").append(sussumente)
                 .append(" sussume ").append(sussumeta)
-                .append(" (").append(description).append(")\n");
+                .append("\n");
 
         LOGGER.fine("Sussunzione identificata: " + sussumente + " sussume " + sussumeta);
     }

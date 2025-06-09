@@ -5,6 +5,23 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.3] - 2025-06-09
+### Fixed
+- Corretto parzialmente un problema nella generazione della prova nel loop CDCL.
+  La procedura è ora più stabile, ma richiede ancora verifiche su alcuni casi.
+- Migliorati gli output nei file `.result`, ora più leggibili e accurati.
+
+
+
+## [1.8.2] - 2025-06-08
+### Fixed
+- Risolto un ulteriore caso di ciclo infinito nella procedura CDCL,
+  dovuto all'alternanza continua tra due variabili già decise.
+- Implementato un controllo più rigoroso: una variabile non può
+  essere scelta nuovamente come decisione finché esistono
+  variabili mai decise.
+
+
 ## [1.8.1] - 2025-06-08
 ### Fixed
 - Risolto un bug nella procedura CDCL che poteva generare un ciclo infinito

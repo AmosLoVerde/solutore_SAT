@@ -10,14 +10,14 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * SOLUTORE CDCL AVANZATO - Implementazione completa con restart opzionale e anti-loop VSIDS
+ * SOLUTORE CDCL AVANZATO - Implementazione completa con restart opzionale e anti-loop VSIDS avanzato
  *
  * Implementazione dell'algoritmo CDCL con integrazione opzionale della tecnica restart
  * per prevenzione stalli durante la ricerca SAT. Il restart è attivato solo quando
  * esplicitamente richiesto tramite configurazione.
- * 
- * Anti-loop VSIDS - Previene riselezionare immediatamente la stessa variabile
- * dopo backtrack per evitare loop infiniti nella ricerca.
+ *
+ * NUOVO: Anti-loop VSIDS avanzato - Traccia tutte le variabili già scelte e le esclude
+ * finché esistono alternative non ancora tentate, prevenendo loop complessi.
  */
 public class CDCLSolver {
 
@@ -62,25 +62,24 @@ public class CDCLSolver {
     /** Flag per interruzione esterna controllata (gestione timeout) */
     private volatile boolean interrupted = false;
 
-    /** Tecnica restart opzionale (null se non abilitata) */
+    /** NUOVO: Tecnica restart opzionale (null se non abilitata) */
     private RestartTechnique restartTechnique;
 
     //endregion
 
-    //region ANTI-LOOP VSIDS TRACKING
+    //region NUOVO: ANTI-LOOP VSIDS AVANZATO
 
     /**
-     * Ultima variabile scelta per decisione.
-     * Utilizzata per prevenire riselezionare immediatamente la stessa variabile
-     * dopo backtrack, evitando loop infiniti nella ricerca VSIDS.
+     * NUOVO: Set di tutte le variabili già scelte almeno una volta.
+     * Utilizzato per escludere variabili già tentate finché esistono alternative.
      */
-    private Integer lastChosenVariable;
+    private final Set<Integer> alreadyChosenVariables;
 
     /**
-     * Flag che indica se l'ultima decisione ha causato un backtrack.
-     * Se true, la prossima decisione non può riselezionare lastChosenVariable.
+     * NUOVO: Contatore cicli di reset per statistiche e debugging.
+     * Incrementato ogni volta che si resetta alreadyChosenVariables.
      */
-    private boolean lastDecisionCausedBacktrack;
+    private int antiLoopResetCount;
 
     //endregion
 
@@ -117,7 +116,7 @@ public class CDCLSolver {
         this.proofGenerator = new ProofGenerator();
         this.proofGenerator.setVariableMapping(createInverseVariableMapping());
 
-        // Inizializzazione restart opzionale
+        // NUOVO: Inizializzazione restart opzionale
         if (enableRestart) {
             this.restartTechnique = new RestartTechnique();
             LOGGER.info("Restart technique ABILITATA");
@@ -131,9 +130,9 @@ public class CDCLSolver {
         this.decisionCount = 0;
         this.interrupted = false;
 
-        // Inizializzazione anti-loop VSIDS
-        this.lastChosenVariable = null;
-        this.lastDecisionCausedBacktrack = false;
+        // NUOVO: Inizializzazione anti-loop VSIDS avanzato
+        this.alreadyChosenVariables = new HashSet<>();
+        this.antiLoopResetCount = 0;
 
         // Validazione e logging
         logSolverInitializationInfo();
@@ -218,7 +217,7 @@ public class CDCLSolver {
             LOGGER.info("Formula sparsa rilevata - ricerca potenzialmente più veloce");
         }
 
-        LOGGER.info("Anti-loop VSIDS: ATTIVO per prevenzione cicli infiniti");
+        LOGGER.info("Anti-loop VSIDS avanzato: ATTIVO per prevenzione cicli complessi");
     }
 
     //endregion
@@ -260,22 +259,25 @@ public class CDCLSolver {
     public SATStatistics getPartialStatistics() {
         SATStatistics partialStats = new SATStatistics();
 
-        // Copia contatori correnti
-        for (int i = 0; i < decisionCount; i++) {
+        // CORRETTO: Copia contatori correnti senza modificare gli originali
+        int currentDecisions = decisionCount;
+        int currentConflicts = conflictCount;
+        int currentRestarts = (restartTechnique != null) ? restartTechnique.getTotalRestarts() : 0;
+
+        // Replica le statistiche senza usare loop che modificherebbero i contatori
+        for (int i = 0; i < currentDecisions; i++) {
             partialStats.incrementDecisions();
         }
-        for (int i = 0; i < conflictCount; i++) {
+        for (int i = 0; i < currentConflicts; i++) {
             partialStats.incrementConflicts();
         }
-
-        // Statistiche restart se abilitato
-        if (restartTechnique != null) {
-            for (int i = 0; i < restartTechnique.getTotalRestarts(); i++) {
-                partialStats.incrementRestarts();
-            }
+        for (int i = 0; i < currentRestarts; i++) {
+            partialStats.incrementRestarts();
         }
 
+        // Copia altre statistiche
         partialStats.setProofSize(proofGenerator.getStepCount());
+
         return partialStats;
     }
 
@@ -292,8 +294,14 @@ public class CDCLSolver {
         int iterationCount = 0;
         final int MAX_ITERATIONS = 10_000_000;
 
-        // FASE INIZIALIZZAZIONE: Configura livello 0 con clausole unitarie
-        initializeLevel0WithUnitClauses();
+        try {
+            // FASE INIZIALIZZAZIONE: Configura livello 0 con clausole unitarie
+            initializeLevel0WithUnitClauses();
+        } catch (ImmediateUNSATException e) {
+            // NUOVO: Gestione UNSAT immediato da clausole unitarie contraddittorie
+            LOGGER.info("Formula UNSAT determinata durante inizializzazione: " + e.getMessage());
+            return CDCLExecutionResult.unsatisfiable();
+        }
 
         // LOOP PRINCIPALE CDCL
         while (!interrupted) {
@@ -338,10 +346,6 @@ public class CDCLSolver {
 
                 // STEP 4: Learning e backtracking
                 executeLearningAndBacktrack(analysisResult);
-
-                // Marca che l'ultima decisione ha causato backtrack
-                markLastDecisionCausedBacktrack();
-
                 continue; // Riprova con nuova configurazione
             }
 
@@ -356,18 +360,8 @@ public class CDCLSolver {
     }
 
     /**
-     * Marca che l'ultima decisione ha causato un backtrack.
-     * Questo triggera l'anti-loop nella prossima selezione variabile.
-     */
-    private void markLastDecisionCausedBacktrack() {
-        if (lastChosenVariable != null) {
-            lastDecisionCausedBacktrack = true;
-            LOGGER.finest("Anti-loop VSIDS attivato per variabile: " + lastChosenVariable);
-        }
-    }
-
-    /**
      * Inizializza livello 0 con tutte le clausole unitarie originali della formula.
+     * CORRETTO: Rileva immediatamente UNSAT se clausole unitarie contradditorie.
      */
     private void initializeLevel0WithUnitClauses() {
         LOGGER.fine("=== INIZIALIZZAZIONE LIVELLO 0 CON CLAUSOLE UNITARIE ===");
@@ -375,11 +369,39 @@ public class CDCLSolver {
         List<List<Integer>> allClauses = formula.getClauses();
         int unitClausesAdded = 0;
 
+        // NUOVO: Tracking per rilevamento contradizioni immediate
+        Map<Integer, Boolean> unitClauseValues = new HashMap<>();
+        Map<Integer, List<Integer>> unitClauseSources = new HashMap<>();
+
         for (List<Integer> clause : allClauses) {
             if (clause.size() == 1) {
                 Integer literal = clause.get(0);
                 Integer variable = Math.abs(literal);
                 Boolean value = literal > 0;
+
+                // NUOVO: Verifica contraddizioni immediate tra clausole unitarie
+                if (unitClauseValues.containsKey(variable)) {
+                    Boolean existingValue = unitClauseValues.get(variable);
+                    if (!existingValue.equals(value)) {
+                        // CONTRADDIZIONE RILEVATA: K e !K
+                        LOGGER.info("*** CONTRADDIZIONE CLAUSOLE UNITARIE RILEVATA ***");
+                        LOGGER.info("Variabile " + variable + ": clausola1=" + existingValue + ", clausola2=" + value);
+
+                        // Genera prova immediata: (K) e (!K) genera []
+                        List<Integer> clause1 = unitClauseSources.get(variable);
+                        List<Integer> clause2 = new ArrayList<>(clause);
+                        List<Integer> emptyClause = new ArrayList<>();
+
+                        proofGenerator.recordResolutionStep(clause1, clause2, emptyClause);
+
+                        // Aggiorna statistiche: 1 conflitto = 1 passo di prova
+                        conflictCount = 1;
+                        statistics.incrementConflicts();
+
+                        LOGGER.info("Prova UNSAT generata: " + clause1 + " ∧ " + clause2 + " ⊢ []");
+                        throw new ImmediateUNSATException("Clausole unitarie contraddittorie rilevate al livello 0");
+                    }
+                }
 
                 // Verifica se variabile già assegnata
                 if (assignedValues.get(variable) == null) {
@@ -390,6 +412,11 @@ public class CDCLSolver {
 
                     // Registra mapping per uso nelle spiegazioni
                     unitClauseMapping.put(literal, new ArrayList<>(clause));
+
+                    // NUOVO: Registra per controllo contraddizioni
+                    unitClauseValues.put(variable, value);
+                    unitClauseSources.put(variable, new ArrayList<>(clause));
+
                     unitClausesAdded++;
 
                     LOGGER.fine("Clausola unitaria aggiunta al livello 0: " + variable + " = " + value);
@@ -401,6 +428,15 @@ public class CDCLSolver {
         }
 
         LOGGER.info("Livello 0 inizializzato con " + unitClausesAdded + " clausole unitarie");
+    }
+
+    /**
+     * NUOVO: Eccezione per segnalare UNSAT immediato durante inizializzazione.
+     */
+    private static class ImmediateUNSATException extends RuntimeException {
+        public ImmediateUNSATException(String message) {
+            super(message);
+        }
     }
 
     /**
@@ -436,8 +472,9 @@ public class CDCLSolver {
         }
 
         String antiLoopInfo = "";
-        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
-            antiLoopInfo = String.format(", Anti-loop attivo (var %d bloccata)", lastChosenVariable);
+        if (!alreadyChosenVariables.isEmpty()) {
+            antiLoopInfo = String.format(", Anti-loop: %d variabili bloccate, %d reset",
+                    alreadyChosenVariables.size(), antiLoopResetCount);
         }
 
         LOGGER.fine(String.format("Iterazione %d - Livello: %d, Decisioni: %d, Conflitti: %d%s, Assegnate: %d/%d%s",
@@ -457,18 +494,21 @@ public class CDCLSolver {
         LOGGER.fine("Clausola conflitto: " + conflictClause);
         LOGGER.fine("Clausola giustificante: " + justifyingClause);
 
-        // Aggiorna statistiche
+        // CORRETTO: Aggiorna SEMPRE le statistiche per ogni conflitto rilevato
         conflictCount++;
         statistics.incrementConflicts();
 
         // Aggiorna contatori VSIDS per migliorare euristica futura
         updateVSIDSCountersAfterConflict(conflictClause);
 
-        // Gestione restart se abilitato
+        // NUOVO: Gestione restart se abilitato
         if (restartTechnique != null) {
             boolean shouldRestart = restartTechnique.registerConflictAndCheckRestart();
 
             if (shouldRestart) {
+                // CORRETTO: Aggiorna statistiche restart PRIMA dell'esecuzione
+                statistics.incrementRestarts();
+
                 // Esegue conflict analysis normale prima del restart
                 ConflictAnalysisResult normalResult = performNormalConflictAnalysis(conflictClause, justifyingClause);
 
@@ -501,7 +541,7 @@ public class CDCLSolver {
     }
 
     /**
-     * Esegue procedura restart completa.
+     * NUOVO: Esegue procedura restart completa.
      */
     private ConflictAnalysisResult executeRestartProcedure(ConflictAnalysisResult normalResult) {
         LOGGER.info("=== ESECUZIONE RESTART PROCEDURA ===");
@@ -517,12 +557,9 @@ public class CDCLSolver {
                 currentLearnedClauses.add(normalResult.getLearnedClause());
             }
 
-            // Esegue restart
+            // Esegue restart (NON incrementa più statistics.incrementRestarts() qui)
             RestartTechnique.RestartResult restartResult = restartTechnique.executeRestart(
                     level0Assignments, currentLearnedClauses);
-
-            // Aggiorna statistiche
-            statistics.incrementRestarts();
 
             // Esegue backtrack al livello 0
             performRestartBacktrack();
@@ -530,7 +567,7 @@ public class CDCLSolver {
             // Aggiorna clausole apprese con quelle ottimizzate
             updateLearnedClausesFromRestart(restartResult);
 
-            // Reset anti-loop dopo restart
+            // NUOVO: Reset anti-loop dopo restart
             resetAntiLoopTracking();
 
             LOGGER.info("Restart #" + restartResult.restartNumber + " completato");
@@ -547,13 +584,13 @@ public class CDCLSolver {
     }
 
     /**
-     * Reset del tracking anti-loop dopo restart.
+     * NUOVO: Reset del tracking anti-loop dopo restart.
      * Il restart resetta completamente la ricerca quindi è sicuro ripartire da capo.
      */
     private void resetAntiLoopTracking() {
-        lastChosenVariable = null;
-        lastDecisionCausedBacktrack = false;
-        LOGGER.fine("Anti-loop VSIDS: Reset dopo restart");
+        alreadyChosenVariables.clear();
+        antiLoopResetCount = 0;
+        LOGGER.fine("Anti-loop VSIDS: Reset completo dopo restart");
     }
 
     /**
@@ -680,39 +717,50 @@ public class CDCLSolver {
 
     /**
      * Esegue spiegazioni sequenziali per risoluzione conflitti al livello 0.
+     * CORRETTO: Utilizza clausole giustificanti in ordine cronologico inverso.
      */
     private ConflictAnalysisResult executeSequentialExplanationsForLevel0(List<Integer> initialClause) {
-        LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 ===");
+        LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 (CDCL CORRETTO) ===");
         LOGGER.info("Clausola iniziale: " + initialClause);
 
         List<Integer> currentClause = new ArrayList<>(initialClause);
         int explanationSteps = 0;
         final int MAX_EXPLANATION_STEPS = 100;
 
-        while (!currentClause.isEmpty() && explanationSteps < MAX_EXPLANATION_STEPS) {
+        // NUOVO: Ottieni la lista cronologica delle implicazioni al livello 0
+        List<AssignedLiteral> level0Implications = getLevel0ImplicationsInChronologicalOrder();
+
+        LOGGER.info("Implicazioni livello 0 in ordine cronologico:");
+        for (int i = 0; i < level0Implications.size(); i++) {
+            AssignedLiteral impl = level0Implications.get(i);
+            LOGGER.info("  " + (i+1) + ". " + impl.getVariable() + " = " + impl.getValue() +
+                    " giustificata da " + impl.getAncestorClause());
+        }
+
+        // Inizia dall'ultima implicazione e vai a ritroso
+        int currentImplicationIndex = level0Implications.size() - 1;
+
+        while (!currentClause.isEmpty() && explanationSteps < MAX_EXPLANATION_STEPS && currentImplicationIndex >= 0) {
             explanationSteps++;
 
-            // Trova prossimo letterale da consumare
-            Integer literalToConsume = findNextLiteralToConsume(currentClause);
-            if (literalToConsume == null) {
-                LOGGER.warning("Impossibile trovare letterale da consumare in: " + currentClause);
-                break;
-            }
+            // CORRETTO: Trova la prossima clausola giustificante da usare
+            List<Integer> justifyingClause = findNextJustifyingClauseForSequentialExplanation(
+                    currentClause, level0Implications, currentImplicationIndex);
 
-            // Trova clausola unitaria corrispondente
-            List<Integer> unitClause = findUnitClauseForLiteral(literalToConsume);
-            if (unitClause == null) {
-                LOGGER.warning("Clausola unitaria non trovata per letterale: " + literalToConsume);
-                break;
+            if (justifyingClause == null) {
+                // Se non trova clausola giustificante, prova con l'implicazione precedente
+                currentImplicationIndex--;
+                continue;
             }
 
             // Genera prossima spiegazione
-            List<Integer> nextClause = generateMathematicalExplanation(currentClause, unitClause);
+            List<Integer> nextClause = generateMathematicalExplanation(currentClause, justifyingClause);
 
-            LOGGER.info("Spiegazione sequenziale " + explanationSteps + ": " + currentClause + " ∧ " + unitClause + " ⊢ " + nextClause);
+            LOGGER.info("Spiegazione sequenziale " + explanationSteps + ": " +
+                    currentClause + " ∧ " + justifyingClause + " ⊢ " + nextClause);
 
             // Registra passo per prova
-            proofGenerator.recordResolutionStep(currentClause, unitClause, nextClause);
+            proofGenerator.recordResolutionStep(currentClause, justifyingClause, nextClause);
 
             // Aggiorna clausola corrente
             currentClause = nextClause;
@@ -722,6 +770,9 @@ public class CDCLSolver {
                 LOGGER.info("*** CLAUSOLA VUOTA DERIVATA DA SPIEGAZIONI SEQUENZIALI (Step " + explanationSteps + ") ***");
                 return ConflictAnalysisResult.unsatisfiable();
             }
+
+            // Passa all'implicazione precedente per il prossimo step
+            currentImplicationIndex--;
         }
 
         if (explanationSteps >= MAX_EXPLANATION_STEPS) {
@@ -733,40 +784,58 @@ public class CDCLSolver {
     }
 
     /**
-     * Trova il prossimo letterale da consumare nelle spiegazioni sequenziali.
+     * NUOVO: Ottiene tutte le implicazioni del livello 0 in ordine cronologico.
      */
-    private Integer findNextLiteralToConsume(List<Integer> clause) {
-        for (Integer literal : clause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
+    private List<AssignedLiteral> getLevel0ImplicationsInChronologicalOrder() {
+        List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
+        List<AssignedLiteral> implications = new ArrayList<>();
 
-            if (assignment != null && findVariableLevel(variable) == 0) {
-                Boolean expectedValue = literal > 0;
-                if (!assignment.getValue().equals(expectedValue)) {
-                    // Letterale in conflitto → restituisce opposto per clausola unitaria
-                    return -literal;
-                }
+        // Filtra solo le implicazioni (esclude le clausole unitarie auto-giustificate)
+        for (AssignedLiteral assignment : level0Assignments) {
+            if (assignment.isImplication() && assignment.hasAncestorClause()) {
+                implications.add(assignment);
             }
         }
-        return null;
+
+        return implications;
     }
 
     /**
-     * Trova clausola unitaria che contiene il letterale specificato.
+     * NUOVO: Trova la prossima clausola giustificante da usare nelle spiegazioni sequenziali.
+     * Cerca una clausola giustificante che sia rilevante per la clausola corrente.
      */
-    private List<Integer> findUnitClauseForLiteral(Integer literal) {
-        // Cerca nel mapping clausole unitarie originali
-        List<Integer> mappedClause = unitClauseMapping.get(literal);
-        if (mappedClause != null) {
-            return mappedClause;
+    private List<Integer> findNextJustifyingClauseForSequentialExplanation(
+            List<Integer> currentClause,
+            List<AssignedLiteral> implications,
+            int currentIndex) {
+
+        if (currentIndex < 0 || currentIndex >= implications.size()) {
+            return null;
         }
 
-        // Genera clausola unitaria sintetica se necessario
-        Integer variable = Math.abs(literal);
-        AssignedLiteral assignment = assignedValues.get(variable);
+        // Prendi l'implicazione corrente
+        AssignedLiteral currentImplication = implications.get(currentIndex);
+        Integer variable = currentImplication.getVariable();
+        Boolean value = currentImplication.getValue();
 
-        if (assignment != null && findVariableLevel(variable) == 0) {
-            return Arrays.asList(literal);
+        // Verifica se questa variabile è coinvolta nella clausola corrente
+        boolean isRelevant = false;
+        for (Integer literal : currentClause) {
+            int literalVariable = Math.abs(literal);
+            if (literalVariable == variable.intValue()) {
+                // Verifica se è in conflitto con l'assegnamento
+                boolean literalValue = literal > 0;
+                if (literalValue != value) {
+                    isRelevant = true;
+                    break;
+                }
+            }
+        }
+
+        if (isRelevant) {
+            LOGGER.fine("Clausola giustificante trovata per " + variable + " = " + value +
+                    ": " + currentImplication.getAncestorClause());
+            return currentImplication.getAncestorClause();
         }
 
         return null;
@@ -1132,112 +1201,141 @@ public class CDCLSolver {
     }
 
     /**
-     * Identifica la clausola che ha giustificato l'ultima propagazione coinvolta nel conflitto.
+     * CORRETTO: Identifica la clausola che ha giustificato l'ULTIMA propagazione coinvolta nel conflitto.
+     * Cerca l'implicazione più recente cronologicamente, non per livello.
      */
     private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
-        AssignedLiteral mostRecentPropagation = null;
-        int highestLevel = -1;
+        // Ottieni tutte le implicazioni del livello 0 in ordine cronologico
+        List<AssignedLiteral> level0Implications = getLevel0ImplicationsInChronologicalOrder();
 
-        // Trova l'implicazione più recente tra i letterali del conflitto
-        for (Integer literal : conflictClause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
+        // Cerca dall'ultima implicazione verso la prima
+        for (int i = level0Implications.size() - 1; i >= 0; i--) {
+            AssignedLiteral assignment = level0Implications.get(i);
+            Integer variable = assignment.getVariable();
 
-            if (assignment != null && assignment.isImplication()) {
-                int assignmentLevel = findVariableLevel(variable);
-                if (assignmentLevel >= highestLevel) {
-                    highestLevel = assignmentLevel;
-                    mostRecentPropagation = assignment;
+            // Verifica se questa variabile è coinvolta nel conflitto
+            for (Integer literal : conflictClause) {
+                int literalVariable = Math.abs(literal);
+                if (literalVariable == variable.intValue()) {
+                    LOGGER.fine("Ultima implicazione coinvolta nel conflitto: " + variable +
+                            " giustificata da " + assignment.getAncestorClause());
+                    return assignment.getAncestorClause();
                 }
             }
         }
 
-        return mostRecentPropagation != null ? mostRecentPropagation.getAncestorClause() : null;
+        LOGGER.warning("Nessuna implicazione trovata per conflitto: " + conflictClause);
+        return null;
     }
 
     //endregion
 
-    //region DECISION MAKING E EURISTICA VSIDS CON ANTI-LOOP
+    //region DECISION MAKING E EURISTICA VSIDS CON ANTI-LOOP AVANZATO
 
     /**
-     * Esegue decision making con euristica VSIDS avanzata e anti-loop.
+     * NUOVO: Esegue decision making con euristica VSIDS avanzata e anti-loop completo.
      *
-     * ALGORITMO ANTI-LOOP:
-     * 1. Se lastDecisionCausedBacktrack è true, salta lastChosenVariable
-     * 2. Trova prossima variabile non assegnata nell'ordine di frequenza
-     * 3. Se non trova alternative, riabilita lastChosenVariable come fallback
-     * 4. Aggiorna tracking per prossima iterazione
+     * ALGORITMO ANTI-LOOP AVANZATO:
+     * 1. Cerca variabili non ancora mai scelte (non in alreadyChosenVariables)
+     * 2. Se tutte già scelte, resetta il set e riparte da capo
+     * 3. Aggiorna tracking delle variabili scelte
      */
     private void executeDecisionMaking() {
-        LOGGER.fine("Avvio decision making con euristica VSIDS e anti-loop");
+        LOGGER.fine("Avvio decision making con euristica VSIDS e anti-loop avanzato");
 
-        Integer selectedVariable = null;
-        Boolean selectedPolarity = null;
+        VariableSelection selection = findBestVariableWithAntiLoop();
 
-        // Strategia di selezione con anti-loop
-        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
-            LOGGER.fine("Anti-loop attivo: evitando variabile " + lastChosenVariable);
-
-            // Trova variabile alternativa escludendo quella bloccata
-            VariableSelection selection = findAlternativeVariableWithAntiLoop(lastChosenVariable);
-
-            if (selection != null) {
-                selectedVariable = selection.variable;
-                selectedPolarity = selection.polarity;
-                LOGGER.fine("Variabile alternativa selezionata: " + selectedVariable + " (anti-loop)");
-            } else {
-                // Fallback: nessuna alternativa, riabilita la variabile bloccata
-                LOGGER.fine("Nessuna alternativa trovata, riabilitando variabile " + lastChosenVariable);
-                selectedVariable = lastChosenVariable;
-                selectedPolarity = selectOptimalPolarity(lastChosenVariable);
-            }
-
-            // Reset flag anti-loop dopo una decisione
-            lastDecisionCausedBacktrack = false;
-
-        } else {
-            // Strategia normale: prima variabile non assegnata
-            VariableSelection selection = findFirstUnassignedVariable();
-            if (selection != null) {
-                selectedVariable = selection.variable;
-                selectedPolarity = selection.polarity;
-            }
-        }
-
-        // Validazione selezione
-        if (selectedVariable == null) {
+        if (selection == null) {
             throw new IllegalStateException("Decision making chiamato ma nessuna variabile disponibile");
         }
 
-        // Registra decisione e aggiorna tracking
-        recordDecision(selectedVariable, selectedPolarity);
-        updateAntiLoopTracking(selectedVariable);
+        // Registra decisione e aggiorna tracking anti-loop
+        recordDecision(selection.variable, selection.polarity);
+        updateAntiLoopTracking(selection.variable);
     }
 
     /**
-     * Trova variabile alternativa escludendo quella bloccata dall'anti-loop.
+     * NUOVO: Trova migliore variabile applicando strategia anti-loop avanzata.
      */
-    private VariableSelection findAlternativeVariableWithAntiLoop(Integer blockedVariable) {
+    private VariableSelection findBestVariableWithAntiLoop() {
+        // FASE 1: Cerca variabili mai scelte prima
+        VariableSelection freshVariable = findUntriedVariable();
+        if (freshVariable != null) {
+            LOGGER.fine("Selezionata variabile mai tentata: " + freshVariable.variable);
+            return freshVariable;
+        }
+
+        // FASE 2: Tutte le variabili disponibili sono già state tentate
+        // Verifica se ci sono variabili non assegnate
+        List<Integer> unassignedVariables = getUnassignedVariables();
+
+        if (unassignedVariables.isEmpty()) {
+            return null; // Nessuna variabile disponibile
+        }
+
+        // FASE 3: Reset del tracking e ripartenza
+        LOGGER.info("Anti-loop: tutte le variabili disponibili già tentate, reset tracking");
+        performAntiLoopReset();
+
+        // FASE 4: Seleziona variabile dopo reset
+        return findFirstUnassignedVariableAfterReset();
+    }
+
+    /**
+     * NUOVO: Trova prima variabile non ancora mai tentata.
+     */
+    private VariableSelection findUntriedVariable() {
         for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
             Integer variable = entry.getKey();
 
-            // Salta variabile bloccata e variabili già assegnate
-            if (variable.equals(blockedVariable) || entry.getValue() != null) {
+            // Salta variabili già assegnate
+            if (entry.getValue() != null) {
                 continue;
             }
 
-            // Variabile non assegnata e non bloccata trovata
+            // Salta variabili già tentate
+            if (alreadyChosenVariables.contains(variable)) {
+                continue;
+            }
+
+            // Variabile non assegnata e mai tentata trovata
             Boolean polarity = selectOptimalPolarity(variable);
             return new VariableSelection(variable, polarity);
         }
 
-        return null; // Nessuna alternativa trovata
+        return null; // Nessuna variabile non tentata trovata
     }
 
     /**
-     * Trova prima variabile non assegnata (strategia normale).
+     * NUOVO: Ottiene lista di tutte le variabili non assegnate.
      */
-    private VariableSelection findFirstUnassignedVariable() {
+    private List<Integer> getUnassignedVariables() {
+        List<Integer> unassigned = new ArrayList<>();
+
+        for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
+            if (entry.getValue() == null) {
+                unassigned.add(entry.getKey());
+            }
+        }
+
+        return unassigned;
+    }
+
+    /**
+     * NUOVO: Esegue reset del tracking anti-loop.
+     */
+    private void performAntiLoopReset() {
+        int previouslyBlocked = alreadyChosenVariables.size();
+        alreadyChosenVariables.clear();
+        antiLoopResetCount++;
+
+        LOGGER.info("Anti-loop reset #" + antiLoopResetCount + ": " + previouslyBlocked + " variabili riabilitate");
+    }
+
+    /**
+     * NUOVO: Trova prima variabile non assegnata dopo reset.
+     */
+    private VariableSelection findFirstUnassignedVariableAfterReset() {
         for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
             Integer variable = entry.getKey();
 
@@ -1251,12 +1349,11 @@ public class CDCLSolver {
     }
 
     /**
-     * Aggiorna tracking anti-loop dopo decisione.
+     * NUOVO: Aggiorna tracking anti-loop dopo decisione.
      */
     private void updateAntiLoopTracking(Integer chosenVariable) {
-        lastChosenVariable = chosenVariable;
-        // lastDecisionCausedBacktrack viene impostato a true solo se si verifica backtrack
-        LOGGER.finest("Anti-loop tracking: lastChosenVariable = " + chosenVariable);
+        alreadyChosenVariables.add(chosenVariable);
+        LOGGER.finest("Anti-loop tracking: variabile " + chosenVariable + " aggiunta al set bloccato (totale: " + alreadyChosenVariables.size() + ")");
     }
 
     /**
@@ -1398,6 +1495,9 @@ public class CDCLSolver {
     private SATResult generateFinalResult(CDCLExecutionResult executionResult) {
         statistics.stopTimer();
 
+        // CORRETTO: Sincronizza tutte le statistiche finali prima del logging
+        synchronizeFinalStatistics();
+
         // Log statistiche finali
         logFinalStatistics();
 
@@ -1423,6 +1523,71 @@ public class CDCLSolver {
             }
             default -> throw new IllegalStateException("Tipo risultato non gestito: " + executionResult.getType());
         };
+    }
+
+    /**
+     * NUOVO: Sincronizza tutte le statistiche finali da diverse fonti.
+     * Garantisce coerenza tra CDCLSolver e RestartTechnique per output finale.
+     * CORRETTO: Il numero di conflitti deve coincidere con la dimensione della prova.
+     */
+    private void synchronizeFinalStatistics() {
+        // CRITICO: Il numero di conflitti = dimensione della prova (numero passi risoluzione)
+        int proofSize = proofGenerator.getStepCount();
+
+        if (proofSize > 0) {
+            // Per formule UNSAT: conflitti = passi di prova
+            conflictCount = proofSize;
+
+            // Sincronizza statistics.conflicts con il valore corretto
+            while (statistics.getConflicts() < conflictCount) {
+                statistics.incrementConflicts();
+            }
+            // Se statistics.conflicts è maggiore, resettalo al valore corretto
+            if (statistics.getConflicts() > conflictCount) {
+                // Crea nuove statistiche con il valore corretto
+                SATStatistics correctedStats = new SATStatistics();
+                for (int i = 0; i < conflictCount; i++) {
+                    correctedStats.incrementConflicts();
+                }
+                for (int i = 0; i < decisionCount; i++) {
+                    correctedStats.incrementDecisions();
+                }
+                if (restartTechnique != null) {
+                    for (int i = 0; i < restartTechnique.getTotalRestarts(); i++) {
+                        correctedStats.incrementRestarts();
+                    }
+                }
+                correctedStats.setProofSize(proofSize);
+                this.statistics = correctedStats;
+            }
+        } else {
+            // Per formule SAT: usa il conteggio normale dei conflitti
+            while (statistics.getConflicts() < conflictCount) {
+                statistics.incrementConflicts();
+            }
+        }
+
+        // Verifica e corregge il conteggio decisioni
+        int actualDecisions = decisionCount;
+        while (statistics.getDecisions() < actualDecisions) {
+            statistics.incrementDecisions();
+        }
+
+        // Sincronizza conteggio restart da RestartTechnique
+        if (restartTechnique != null) {
+            int actualRestarts = restartTechnique.getTotalRestarts();
+            while (statistics.getRestarts() < actualRestarts) {
+                statistics.incrementRestarts();
+            }
+        }
+
+        // Imposta dimensione prova
+        statistics.setProofSize(proofSize);
+
+        LOGGER.fine("Statistiche sincronizzate: Decisioni=" + statistics.getDecisions() +
+                ", Conflitti=" + statistics.getConflicts() +
+                ", Restart=" + statistics.getRestarts() +
+                ", ProofSize=" + statistics.getProofSize());
     }
 
     /**
@@ -1460,10 +1625,23 @@ public class CDCLSolver {
         LOGGER.info("Decisioni totali: " + decisionCount);
         LOGGER.info("Conflitti rilevati: " + conflictCount);
 
-        // Log statistiche restart se abilitato
+        // CORRETTO: Log statistiche restart ottenute direttamente da RestartTechnique
         if (restartTechnique != null) {
-            LOGGER.info("Restart eseguiti: " + restartTechnique.getTotalRestarts());
-            LOGGER.info("Sussunzione rimozioni: " + restartTechnique.getTotalSubsumptionRemovals());
+            int totalRestarts = restartTechnique.getTotalRestarts();
+            int totalSubsumptionRemovals = restartTechnique.getTotalSubsumptionRemovals();
+
+            LOGGER.info("Restart eseguiti: " + totalRestarts);
+            LOGGER.info("Sussunzione rimozioni: " + totalSubsumptionRemovals);
+
+            // Verifica coerenza con statistics interne
+            int statisticsRestarts = statistics.getRestarts();
+            if (statisticsRestarts != totalRestarts) {
+                LOGGER.warning("Inconsistenza restart: statistics=" + statisticsRestarts + ", technique=" + totalRestarts);
+                // Sincronizza con il valore corretto da RestartTechnique
+                while (statistics.getRestarts() < totalRestarts) {
+                    statistics.incrementRestarts();
+                }
+            }
         }
 
         LOGGER.info("Clausole apprese: " + learnedClauses.size());
@@ -1482,7 +1660,7 @@ public class CDCLSolver {
             LOGGER.info("Efficacia learning: " + String.format("%.2f", learningRate) + " clausole/conflitto");
         }
 
-        // Statistiche restart se disponibili
+        // CORRETTO: Statistiche restart basate sui valori corretti
         if (restartTechnique != null && restartTechnique.getTotalRestarts() > 0) {
             double restartRate = (double) conflictCount / restartTechnique.getTotalRestarts();
             LOGGER.info("Frequenza restart: " + String.format("%.1f", restartRate) + " conflitti/restart");
@@ -1491,21 +1669,19 @@ public class CDCLSolver {
             LOGGER.info("Efficacia sussunzione: " + String.format("%.1f", subsumptionRate) + " rimozioni/restart");
         }
 
-        // Statistiche anti-loop
-        if (lastChosenVariable != null) {
-            LOGGER.info("Ultima variabile scelta: " + lastChosenVariable);
-            if (lastDecisionCausedBacktrack) {
-                LOGGER.info("Anti-loop: variabile bloccata per prossima decisione");
-            }
+        // NUOVO: Statistiche anti-loop avanzato
+        LOGGER.info("Anti-loop avanzato: " + alreadyChosenVariables.size() + " variabili bloccate");
+        if (antiLoopResetCount > 0) {
+            LOGGER.info("Reset anti-loop eseguiti: " + antiLoopResetCount);
         }
     }
 
     //endregion
 
-    //region INTERFACCIA PUBBLICA RESTART
+    //region INTERFACCIA PUBBLICA RESTART E ANTI-LOOP
 
     /**
-     * Restituisce statistiche restart se abilitato.
+     * NUOVO: Restituisce statistiche restart se abilitato.
      */
     public String getRestartStatistics() {
         if (restartTechnique != null) {
@@ -1516,28 +1692,42 @@ public class CDCLSolver {
     }
 
     /**
-     * Verifica se restart è abilitato.
+     * NUOVO: Verifica se restart è abilitato.
      */
     public boolean isRestartEnabled() {
         return restartTechnique != null;
     }
 
     /**
-     * Restituisce informazioni anti-loop per debugging.
+     * NUOVO: Restituisce informazioni anti-loop avanzato per debugging.
      */
     public String getAntiLoopInfo() {
         StringBuilder info = new StringBuilder();
-        info.append("=== ANTI-LOOP VSIDS INFO ===\n");
-        info.append("Ultima variabile scelta: ").append(lastChosenVariable != null ? lastChosenVariable : "nessuna").append("\n");
-        info.append("Backtrack flag attivo: ").append(lastDecisionCausedBacktrack).append("\n");
+        info.append("=== ANTI-LOOP VSIDS AVANZATO ===\n");
+        info.append("Variabili già scelte: ").append(alreadyChosenVariables.size()).append("\n");
 
-        if (lastDecisionCausedBacktrack && lastChosenVariable != null) {
-            info.append("Variabile bloccata per prossima decisione: ").append(lastChosenVariable).append("\n");
-        } else {
-            info.append("Nessuna variabile bloccata\n");
+        if (!alreadyChosenVariables.isEmpty()) {
+            info.append("Set variabili bloccate: ").append(alreadyChosenVariables).append("\n");
         }
 
-        info.append("============================");
+        info.append("Reset eseguiti: ").append(antiLoopResetCount).append("\n");
+
+        List<Integer> unassignedVars = getUnassignedVariables();
+        info.append("Variabili non assegnate: ").append(unassignedVars.size()).append("\n");
+
+        List<Integer> availableForDecision = new ArrayList<>();
+        for (Integer var : unassignedVars) {
+            if (!alreadyChosenVariables.contains(var)) {
+                availableForDecision.add(var);
+            }
+        }
+
+        info.append("Variabili disponibili per decisione: ").append(availableForDecision.size()).append("\n");
+        if (!availableForDecision.isEmpty() && availableForDecision.size() <= 10) {
+            info.append("Variabili disponibili: ").append(availableForDecision).append("\n");
+        }
+
+        info.append("===============================");
         return info.toString();
     }
 
@@ -1546,7 +1736,7 @@ public class CDCLSolver {
     //region CLASSI DI SUPPORTO
 
     /**
-     * Classe di supporto per selezione variabile con polarità.
+     * NUOVO: Classe di supporto per selezione variabile con polarità.
      */
     private static class VariableSelection {
         final Integer variable;

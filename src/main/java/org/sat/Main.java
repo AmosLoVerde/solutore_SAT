@@ -41,7 +41,7 @@ import java.util.stream.Stream;
  * - Tecnica restart per prevenzione stalli (NUOVO)
  *
  * @author Amos Lo Verde
- * @version 1.8.0
+ * @version 1.8.3
  */
 public final class Main {
 
@@ -744,7 +744,7 @@ public final class Main {
         // Informazioni ottimizzazioni attive
         List<String> activeOpts = buildActiveOptimizationsList(config);
         if (!activeOpts.isEmpty()) {
-            writer.write("-> Ottimizzazioni: " + String.join(", ", activeOpts) + "\n");
+            writer.write("-> Opzioni abilitate: " + String.join(", ", activeOpts) + "\n");
         }
 
         writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
@@ -756,24 +756,23 @@ public final class Main {
             writeUNSATResult(writer, result, config.useTseitin);
         }
 
-        // Statistiche finali
+        // Statistiche finali - MODIFICATO: diverse per SAT e UNSAT
         writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
         SATStatistics stats = result.getStatistics();
-        writer.write("Decisioni: " + stats.getDecisions() + "\n");
-        writer.write("Conflitti: " + stats.getConflicts() + "\n");
-        writer.write("Propagazioni: " + stats.getPropagations() + "\n");
-        writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
 
-        // Informazioni restart se utilizzato
-        if (config.useRestart) {
-            writer.write("Restart eseguiti: " + stats.getRestarts() + "\n");
-            if (stats.getRestarts() > 0) {
-                double avgConflicts = (double) stats.getConflicts() / stats.getRestarts();
-                writer.write("Media conflitti/restart: " + String.format("%.1f", avgConflicts) + "\n");
-            }
+        if (result.isSatisfiable()) {
+            // Per formule SAT: decisioni, propagazioni, conflitti, clausole apprese, tempo
+            writer.write("Decisioni: " + stats.getDecisions() + "\n");
+            writer.write("Propagazioni: " + stats.getPropagations() + "\n");
+            writer.write("Conflitti: " + stats.getConflicts() + "\n");
+            writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
+            writer.write("Tempo risoluzione: " + stats.getExecutionTimeMs() + " ms\n");
+        } else {
+            // Per formule UNSAT: solo conflitti, clausole apprese, tempo
+            writer.write("Conflitti: " + stats.getConflicts() + "\n");
+            writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
+            writer.write("Tempo risoluzione: " + stats.getExecutionTimeMs() + " ms\n");
         }
-
-        writer.write("Tempo risoluzione: " + stats.getExecutionTimeMs() + " ms\n");
     }
 
     /**
@@ -848,7 +847,7 @@ public final class Main {
             // Informazioni ottimizzazioni attive
             List<String> activeOpts = buildActiveOptimizationsList(config);
             if (!activeOpts.isEmpty()) {
-                writer.write("-> Ottimizzazioni: " + String.join(", ", activeOpts) + "\n");
+                writer.write("-> Opzioni abilitate: " + String.join(", ", activeOpts) + "\n");
             }
 
             writer.write("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
