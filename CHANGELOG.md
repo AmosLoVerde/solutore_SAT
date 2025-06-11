@@ -5,6 +5,40 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.4] - 2025-06-11
+### Fixed
+- Risolti i passaggi legati alla "spiegazione" e gestione dei "conflitti"
+  nella generazione della prova nel file `CDCLSolver.java`.
+- La costruzione della prova è ora più solida e corretta, con tracciabilità
+  completa delle implicazioni durante il processo CDCL.
+
+
+## [1.8.3] - 2025-06-09
+### Fixed
+- Corretto parzialmente un problema nella generazione della prova nel loop CDCL.
+  La procedura è ora più stabile, ma richiede ancora verifiche su alcuni casi.
+- Migliorati gli output nei file `.result`, ora più leggibili e accurati.
+
+
+
+## [1.8.2] - 2025-06-08
+### Fixed
+- Risolto un ulteriore caso di ciclo infinito nella procedura CDCL,
+  dovuto all'alternanza continua tra due variabili già decise.
+- Implementato un controllo più rigoroso: una variabile non può
+  essere scelta nuovamente come decisione finché esistono
+  variabili mai decise.
+
+
+## [1.8.1] - 2025-06-08
+### Fixed
+- Risolto un bug nella procedura CDCL che poteva generare un ciclo infinito
+  scegliendo ripetutamente la stessa variabile decisionale dopo un salto
+  all'indietro.
+- Ora il sistema impedisce la selezione consecutiva della stessa variabile
+  come decisione, prevenendo loop infiniti in E-CNF.
+
+
 ## [1.8.0] - 2025-06-08
 ### Added
 - Implementata la tecnica di reinizio con sussunzione ogni 5 conflitti,
@@ -19,7 +53,6 @@ e adotta il [versionamento semantico](https://semver.org/lang/it/).
   - Refactoring completo per migliorare modularità e chiarezza del codice.
 
 
-
 ## [1.7.2] - 2025-06-08
 ### Refactored
 - Riorganizzato il codice sorgente per migliorarne la chiarezza e la comprensione.
@@ -28,9 +61,9 @@ e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
 ## [1.7.1] - 2025-06-07
 ### Fixed
-- Migliorata la struttura e l’organizzazione dei file `.stats` nella cartella `STATS`.
+- Migliorata la struttura e l'organizzazione dei file `.stats` nella cartella `STATS`.
 - Aggiunto il file `opzioni_attive.txt` per indicare le opzioni attive durante
-  l’esecuzione del solutore.
+  l'esecuzione del solutore.
 
 
 ## [1.7.0] - 2025-06-07
@@ -64,7 +97,7 @@ e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
 ## [1.5.2] - 2025-06-05
 ### Fixed
-- Ulteriore miglioramento della generazione della prova all’interno del solver CDCL.
+- Ulteriore miglioramento della generazione della prova all'interno del solver CDCL.
   La logica di costruzione è ora più coerente e robusta, anche se potrà ancora essere
   raffinata in release successive.
 
@@ -107,7 +140,7 @@ e la procedura necessita di ulteriore validazione e revisione dei commenti.
 ## [1.3.0] - 2025-05-02
 ### Added
 - Aggiunta l'opzione `-o <percorso>` alla riga di comando per permettere
-  all’utente di specificare la directory di destinazione dei file di output.
+  all'utente di specificare la directory di destinazione dei file di output.
 
 ## [1.2.1] - 2025-05-01
 ### Fixed
