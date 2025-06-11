@@ -5,6 +5,14 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.4] - 2025-06-11
+### Fixed
+- Risolti i passaggi legati alla "spiegazione" e gestione dei "conflitti"
+  nella generazione della prova nel file `CDCLSolver.java`.
+- La costruzione della prova è ora più solida e corretta, con tracciabilità
+  completa delle implicazioni durante il processo CDCL.
+
+
 ## [1.8.3] - 2025-06-09
 ### Fixed
 - Corretto parzialmente un problema nella generazione della prova nel loop CDCL.

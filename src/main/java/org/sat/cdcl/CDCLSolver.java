@@ -333,8 +333,8 @@ public class CDCLSolver {
             PropagationResult propagationResult = executeUnitPropagation();
 
             if (propagationResult.hasConflict()) {
-                // STEP 3: Conflict analysis con gestione restart integrata
-                ConflictAnalysisResult analysisResult = executeConflictAnalysis(
+                // STEP 3: Risoluzione conflitto con flusso ibrido
+                ConflictAnalysisResult analysisResult = resolveConflict(
                         propagationResult.getConflictClause(),
                         propagationResult.getJustifyingClause()
                 );
@@ -358,6 +358,506 @@ public class CDCLSolver {
         LOGGER.info("Loop CDCL completato - Iterazioni: " + iterationCount);
         return interrupted ? CDCLExecutionResult.interrupted() : CDCLExecutionResult.satisfiable();
     }
+
+    //endregion
+
+    //region NUOVO: RISOLUZIONE CONFLITTO CON FLUSSO IBRIDO
+
+    /**
+     * NUOVO: Verifica se una nuova clausola da apprendere è consistente con quelle già apprese.
+     * CORRETTO: Per clausole unitarie, verifica specificatamente contro clausole unitarie del livello 0.
+     *
+     * @param newClause clausola da verificare per consistenza
+     * @return clausola in conflitto se inconsistente, null se consistente
+     */
+    private List<Integer> checkConsistencyWithLearnedClauses(List<Integer> newClause) {
+        LOGGER.fine("=== VERIFICA CONSISTENZA CLAUSOLA DA APPRENDERE ===");
+        LOGGER.fine("Nuova clausola: " + newClause);
+
+        // CORRETTO: Per clausole unitarie, verifica contro clausole unitarie del livello 0
+        if (newClause.size() == 1) {
+            return checkUnitClauseConsistencyWithLevel0(newClause);
+        }
+
+        // Per clausole non unitarie, verifica normalmente contro tutte le clausole
+        return checkNonUnitClauseConsistency(newClause);
+    }
+
+    /**
+     * NUOVO: Verifica consistenza di clausola unitaria contro assegnamenti unitari del livello 0.
+     *
+     * @param unitClause clausola unitaria da verificare
+     * @return clausola unitaria in conflitto se inconsistente, null se consistente
+     */
+    private List<Integer> checkUnitClauseConsistencyWithLevel0(List<Integer> unitClause) {
+        LOGGER.fine("=== VERIFICA CLAUSOLA UNITARIA CONTRO LIVELLO 0 ===");
+        LOGGER.fine("Clausola unitaria: " + unitClause);
+
+        Integer literal = unitClause.get(0);
+        Integer variable = Math.abs(literal);
+        Boolean expectedValue = literal > 0;
+
+        // Verifica contro assegnamenti del livello 0
+        List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
+
+        for (AssignedLiteral assignment : level0Assignments) {
+            if (assignment.getVariable().equals(variable)) {
+                Boolean actualValue = assignment.getValue();
+
+                if (!actualValue.equals(expectedValue)) {
+                    // INCONSISTENZA TROVATA: variabile ha valore opposto al livello 0
+                    LOGGER.info("*** INCONSISTENZA CLAUSOLA UNITARIA CON LIVELLO 0 ***");
+                    LOGGER.info("Clausola unitaria: " + unitClause + " richiede " + variable + " = " + expectedValue);
+                    LOGGER.info("Livello 0 ha: " + variable + " = " + actualValue);
+
+                    // Crea clausola unitaria contradditoria
+                    List<Integer> conflictingUnitClause = Arrays.asList(-literal);
+                    LOGGER.info("Clausola contradditoria: " + conflictingUnitClause);
+
+                    return conflictingUnitClause;
+                }
+            }
+        }
+
+        // Verifica contro clausole unitarie già apprese
+        for (List<Integer> learnedClause : learnedClauses) {
+            if (learnedClause.size() == 1) {
+                Integer learnedLiteral = learnedClause.get(0);
+                Integer learnedVariable = Math.abs(learnedLiteral);
+
+                if (learnedVariable.equals(variable)) {
+                    Boolean learnedValue = learnedLiteral > 0;
+
+                    if (!learnedValue.equals(expectedValue)) {
+                        LOGGER.info("*** INCONSISTENZA CON CLAUSOLA UNITARIA APPRESA ***");
+                        LOGGER.info("Nuova clausola: " + unitClause);
+                        LOGGER.info("Clausola appresa: " + learnedClause);
+                        return learnedClause;
+                    }
+                }
+            }
+        }
+
+        LOGGER.fine("Clausola unitaria consistente con livello 0 e clausole apprese");
+        return null; // Consistente
+    }
+
+    /**
+     * NUOVO: Verifica consistenza di clausola non unitaria contro tutte le clausole.
+     *
+     * @param nonUnitClause clausola non unitaria da verificare
+     * @return clausola in conflitto se inconsistente, null se consistente
+     */
+    private List<Integer> checkNonUnitClauseConsistency(List<Integer> nonUnitClause) {
+        LOGGER.fine("=== VERIFICA CLAUSOLA NON UNITARIA ===");
+        LOGGER.fine("Clausola non unitaria: " + nonUnitClause);
+
+        // Verifica contro clausole originali della formula
+        for (List<Integer> existingClause : formula.getClauses()) {
+            if (areClausesContradictory(nonUnitClause, existingClause)) {
+                LOGGER.fine("Inconsistenza trovata con clausola originale: " + existingClause);
+                return existingClause;
+            }
+        }
+
+        // Verifica contro clausole già apprese
+        for (List<Integer> existingClause : learnedClauses) {
+            if (areClausesContradictory(nonUnitClause, existingClause)) {
+                LOGGER.fine("Inconsistenza trovata con clausola appresa: " + existingClause);
+                return existingClause;
+            }
+        }
+
+        LOGGER.fine("Clausola non unitaria consistente");
+        return null; // Consistente
+    }
+
+    /**
+     * NUOVO: Verifica se due clausole sono contradditorie (possono generare clausola vuota).
+     *
+     * @param clause1 prima clausola
+     * @param clause2 seconda clausola
+     * @return true se le clausole sono contradditorie
+     */
+    private boolean areClausesContradictory(List<Integer> clause1, List<Integer> clause2) {
+        // Genera spiegazione matematica tra le due clausole
+        List<Integer> explanation = generateMathematicalExplanation(clause1, clause2);
+
+        // Se la spiegazione è vuota, le clausole sono contradditorie
+        boolean contradictory = explanation.isEmpty();
+
+        if (contradictory) {
+            LOGGER.finest("Clausole contradditorie rilevate: " + clause1 + " ∧ " + clause2 + " ⊢ []");
+        }
+
+        return contradictory;
+    }
+
+    /**
+     * CORRETTO: Risolve conflitto con flusso ibrido basato su lunghezza clausola.
+     *
+     * - Clausola unitaria → Backtrack livello 0 + Learning diretto
+     * - Clausola non unitaria → Verifica propagazioni + Iterazioni
+     */
+    private ConflictAnalysisResult resolveConflict(List<Integer> conflictClause,
+                                                   List<Integer> justifyingClause) {
+        LOGGER.fine("=== RISOLUZIONE CONFLITTO CON FLUSSO IBRIDO ===");
+        LOGGER.fine("Clausola conflitto: " + conflictClause);
+        LOGGER.fine("Clausola giustificante: " + justifyingClause);
+
+        // STEP 1: Aggiorna statistiche
+        conflictCount++;
+        statistics.incrementConflicts();
+        updateVSIDSCountersAfterConflict(conflictClause);
+
+        // STEP 2: Gestione restart se abilitato
+        if (restartTechnique != null) {
+            boolean shouldRestart = restartTechnique.registerConflictAndCheckRestart();
+            if (shouldRestart) {
+                LOGGER.info("*** RESTART ATTIVATO ***");
+                statistics.incrementRestarts();
+                return executeRestartProcedure();
+            }
+        }
+
+        // STEP 3: Genera spiegazione iniziale
+        List<Integer> learnedClause = generateMathematicalExplanation(conflictClause, justifyingClause);
+
+        LOGGER.info("Spiegazione generata: " + conflictClause + " ∧ " + justifyingClause + " ⊢ " + learnedClause);
+        proofGenerator.recordResolutionStep(conflictClause, justifyingClause, learnedClause);
+
+        // STEP 4: Verifica clausola vuota → UNSAT
+        if (learnedClause.isEmpty()) {
+            LOGGER.info("*** CLAUSOLA VUOTA DERIVATA - FORMULA UNSAT ***");
+            return ConflictAnalysisResult.unsatisfiable();
+        }
+
+        // STEP 5: FLUSSO IBRIDO basato su lunghezza clausola
+        if (learnedClause.size() == 1) {
+            // CASO A: CLAUSOLA UNITARIA → Comportamento semplificato
+            LOGGER.info("*** CLAUSOLA UNITARIA RILEVATA → FLUSSO SEMPLIFICATO ***");
+            return handleUnitClauseLearning(learnedClause);
+
+        } else {
+            // CASO B: CLAUSOLA NON UNITARIA → Comportamento con iterazioni
+            LOGGER.info("*** CLAUSOLA NON UNITARIA → FLUSSO CON VERIFICA PROPAGAZIONI ***");
+            return handleNonUnitClauseLearning(learnedClause, conflictClause, justifyingClause);
+        }
+    }
+
+    /**
+     * NUOVO: Gestisce learning di clausole unitarie (flusso semplificato).
+     *
+     * Per clausole unitarie:
+     * 1. Backtrack al livello 0
+     * 2. Verifica consistenza solo con clausole apprese
+     * 3. Apprendi direttamente
+     */
+    private ConflictAnalysisResult handleUnitClauseLearning(List<Integer> unitClause) {
+        LOGGER.fine("=== GESTIONE CLAUSOLA UNITARIA ===");
+        LOGGER.fine("Clausola unitaria: " + unitClause);
+
+        // Verifica consistenza SOLO con clausole già apprese
+        List<Integer> conflictingLearnedClause = checkConsistencyWithLearnedClauses(unitClause);
+
+        if (conflictingLearnedClause != null) {
+            LOGGER.info("*** INCONSISTENZA CLAUSOLA UNITARIA CON CLAUSOLE APPRESE ***");
+            LOGGER.info("Clausola unitaria: " + unitClause + " vs " + conflictingLearnedClause);
+
+            // Genera spiegazione finale per UNSAT
+            List<Integer> finalClause = generateMathematicalExplanation(unitClause, conflictingLearnedClause);
+            proofGenerator.recordResolutionStep(unitClause, conflictingLearnedClause, finalClause);
+
+            if (finalClause.isEmpty()) {
+                LOGGER.info("*** CLAUSOLA VUOTA DA INCONSISTENZA UNITARIA - FORMULA UNSAT ***");
+                return ConflictAnalysisResult.unsatisfiable();
+            }
+        }
+
+        // Backtrack al livello 0 per clausole unitarie
+        int backtrackLevel = 0;
+
+        LOGGER.info("Clausola unitaria da apprendere: " + unitClause);
+        LOGGER.info("Backtrack al livello 0 - propagazioni gestite dal ciclo principale");
+
+        return ConflictAnalysisResult.backtrack(unitClause, backtrackLevel);
+    }
+
+    /**
+     * NUOVO: Gestisce learning di clausole non unitarie (flusso con iterazioni).
+     *
+     * Per clausole non unitarie:
+     * 1. Verifica consistenza con propagazioni correnti
+     * 2. Se inconsistente → iterazioni con nuove spiegazioni
+     * 3. Se consistente → verifica con clausole apprese e apprendi
+     */
+    private ConflictAnalysisResult handleNonUnitClauseLearning(List<Integer> initialLearnedClause,
+                                                               List<Integer> initialConflictClause,
+                                                               List<Integer> initialJustifyingClause) {
+        LOGGER.fine("=== GESTIONE CLAUSOLA NON UNITARIA ===");
+
+        // Processo iterativo per clausole non unitarie
+        List<Integer> currentConflictClause = initialConflictClause;
+        List<Integer> currentJustifyingClause = initialJustifyingClause;
+        List<Integer> currentLearnedClause = initialLearnedClause;
+        int iterationCount = 0;
+
+        while (true) {
+            iterationCount++;
+            LOGGER.fine("--- ITERAZIONE NON UNITARIA #" + iterationCount + " ---");
+            LOGGER.fine("Clausola corrente: " + currentLearnedClause);
+
+            // Verifica consistenza con assegnazioni correnti (propagazioni)
+            if (isConsistentWithCurrentAssignments(currentLearnedClause)) {
+                LOGGER.fine("Clausola " + currentLearnedClause + " consistente con assegnazioni correnti");
+
+                // Verifica consistenza con clausole già apprese
+                List<Integer> conflictingLearnedClause = checkConsistencyWithLearnedClauses(currentLearnedClause);
+
+                if (conflictingLearnedClause != null) {
+                    LOGGER.info("*** INCONSISTENZA NON UNITARIA CON CLAUSOLE APPRESE ***");
+                    LOGGER.info("Clausola: " + currentLearnedClause + " vs " + conflictingLearnedClause);
+
+                    // Genera spiegazione finale
+                    List<Integer> finalClause = generateMathematicalExplanation(
+                            currentLearnedClause, conflictingLearnedClause);
+
+                    proofGenerator.recordResolutionStep(currentLearnedClause, conflictingLearnedClause, finalClause);
+
+                    if (finalClause.isEmpty()) {
+                        LOGGER.info("*** CLAUSOLA VUOTA DA INCONSISTENZA NON UNITARIA - FORMULA UNSAT ***");
+                        return ConflictAnalysisResult.unsatisfiable();
+                    }
+                }
+
+                // Clausola può essere appresa
+                int backtrackLevel = calculateSimpleBacktrackLevel(currentLearnedClause);
+                LOGGER.info("Clausola non unitaria appresa: " + currentLearnedClause + ", backtrack: " + backtrackLevel);
+                return ConflictAnalysisResult.backtrack(currentLearnedClause, backtrackLevel);
+
+            } else {
+                // Clausola inconsistente → nuova iterazione
+                LOGGER.info("*** CLAUSOLA NON UNITARIA INCONSISTENTE CON PROPAGAZIONI ***");
+                LOGGER.info("Clausola: " + currentLearnedClause + " inconsistente con assegnazioni correnti");
+
+                List<Integer> nextJustifyingClause = findNextJustifyingClauseForIteration(currentLearnedClause);
+
+                if (nextJustifyingClause == null) {
+                    LOGGER.warning("Nessuna clausola giustificante trovata per iterazione non unitaria");
+                    return ConflictAnalysisResult.unsatisfiable();
+                }
+
+                // Genera nuova spiegazione
+                List<Integer> newLearnedClause = generateMathematicalExplanation(
+                        currentLearnedClause, nextJustifyingClause);
+
+                LOGGER.info("Nuova spiegazione non unitaria: " + currentLearnedClause + " ∧ " +
+                        nextJustifyingClause + " ⊢ " + newLearnedClause);
+
+                proofGenerator.recordResolutionStep(currentLearnedClause, nextJustifyingClause, newLearnedClause);
+
+                // Verifica clausola vuota
+                if (newLearnedClause.isEmpty()) {
+                    LOGGER.info("*** CLAUSOLA VUOTA DA ITERAZIONE NON UNITARIA - FORMULA UNSAT ***");
+                    return ConflictAnalysisResult.unsatisfiable();
+                }
+
+                // Prepara prossima iterazione
+                currentConflictClause = currentLearnedClause;
+                currentJustifyingClause = nextJustifyingClause;
+                currentLearnedClause = newLearnedClause;
+
+                // Protezione anti-loop
+                if (iterationCount > 50) {
+                    LOGGER.warning("Troppi loop iterativo non unitario - possibile ciclo infinito");
+                    return ConflictAnalysisResult.unsatisfiable();
+                }
+            }
+        }
+    }
+
+    /**
+     * NUOVO: Verifica se una clausola è consistente con le assegnazioni correnti.
+     *
+     * Una clausola è inconsistente se tutte le sue letterali sono false sotto
+     * le assegnazioni correnti (propagazioni e decisioni).
+     *
+     * @param clause clausola da verificare
+     * @return true se consistente, false se inconsistente
+     */
+    private boolean isConsistentWithCurrentAssignments(List<Integer> clause) {
+        LOGGER.finest("Verifica consistenza clausola: " + clause + " con assegnazioni correnti");
+
+        boolean hasUnassignedLiteral = false;
+        boolean hasTrueLiteral = false;
+
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            boolean expectedValue = literal > 0;
+
+            AssignedLiteral assignment = assignedValues.get(variable);
+
+            if (assignment == null) {
+                // Variabile non assegnata → clausola può essere soddisfatta
+                hasUnassignedLiteral = true;
+                LOGGER.finest("Variabile " + variable + " non assegnata → clausola può essere soddisfatta");
+            } else {
+                boolean actualValue = assignment.getValue();
+
+                if (actualValue == expectedValue) {
+                    // Letterale vero → clausola soddisfatta
+                    hasTrueLiteral = true;
+                    LOGGER.finest("Letterale " + literal + " vero → clausola soddisfatta");
+                    break;
+                } else {
+                    LOGGER.finest("Letterale " + literal + " falso (variabile " + variable + " = " + actualValue + ")");
+                }
+            }
+        }
+
+        boolean consistent = hasTrueLiteral || hasUnassignedLiteral;
+
+        LOGGER.finest("Clausola " + clause + " → consistente: " + consistent);
+        return consistent;
+    }
+
+    /**
+     * NUOVO: Trova la prossima clausola giustificante per l'iterazione di spiegazione.
+     *
+     * Cerca la clausola che ha giustificato una delle variabili presenti nella
+     * clausola inconsistente, partendo dalle propagazioni più recenti.
+     *
+     * @param inconsistentClause clausola che è risultata inconsistente
+     * @return clausola giustificante per prossima iterazione o null se non trovata
+     */
+    private List<Integer> findNextJustifyingClauseForIteration(List<Integer> inconsistentClause) {
+        LOGGER.fine("Ricerca prossima clausola giustificante per: " + inconsistentClause);
+
+        // Ottieni tutte le implicazioni in ordine cronologico inverso (più recenti prima)
+        List<AssignedLiteral> allImplications = getAllImplicationsInChronologicalOrder();
+        Collections.reverse(allImplications); // Più recenti prima
+
+        // Cerca una variabile della clausola inconsistente che è stata propagata
+        for (Integer literal : inconsistentClause) {
+            Integer variable = Math.abs(literal);
+
+            // Trova l'implicazione più recente di questa variabile
+            for (AssignedLiteral implication : allImplications) {
+                if (implication.getVariable().equals(variable) && implication.hasAncestorClause()) {
+                    List<Integer> justifyingClause = implication.getAncestorClause();
+
+                    LOGGER.fine("Trovata clausola giustificante per variabile " + variable + ": " + justifyingClause);
+                    return justifyingClause;
+                }
+            }
+        }
+
+        // Fallback: cerca tra clausole originali della formula
+        for (Integer literal : inconsistentClause) {
+            Integer variable = Math.abs(literal);
+
+            for (List<Integer> originalClause : formula.getClauses()) {
+                if (containsVariable(originalClause, variable)) {
+                    LOGGER.fine("Usando clausola originale come giustificante per " + variable + ": " + originalClause);
+                    return originalClause;
+                }
+            }
+        }
+
+        LOGGER.warning("Nessuna clausola giustificante trovata per: " + inconsistentClause);
+        return null;
+    }
+
+    /**
+     * SUPPORTO: Verifica se una clausola contiene una specifica variabile.
+     */
+    private boolean containsVariable(List<Integer> clause, Integer variable) {
+        return clause.stream().anyMatch(literal -> Math.abs(literal) == variable.intValue());
+    }
+
+    /**
+     * SUPPORTO: Calcola livello di backtrack semplificato per clausola appresa.
+     *
+     * @param learnedClause clausola risultante dalla spiegazione
+     * @return livello appropriato per backtracking
+     */
+    private int calculateSimpleBacktrackLevel(List<Integer> learnedClause) {
+        if (learnedClause.size() == 1) {
+            // Clausola unitaria → backtrack al livello 0 per propagazione immediata
+            LOGGER.finest("Clausola unitaria → backtrack al livello 0");
+            return 0;
+        } else {
+            // Clausola multipla → backtrack di un livello per permettere assertion
+            int currentLevel = decisionStack.getLevel();
+            int targetLevel = Math.max(0, currentLevel - 1);
+
+            LOGGER.finest("Clausola multipla → backtrack: " + currentLevel + " → " + targetLevel);
+            return targetLevel;
+        }
+    }
+
+    /**
+     * SUPPORTO: Esegue procedura restart semplificata.
+     * Usa il metodo esistente ma con gestione semplificata.
+     */
+    private ConflictAnalysisResult executeRestartProcedure() {
+        try {
+            // Prepara dati per restart
+            List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
+            List<List<Integer>> currentLearnedClauses = new ArrayList<>(learnedClauses);
+
+            // Esegue restart
+            RestartTechnique.RestartResult restartResult = restartTechnique.executeRestart(
+                    level0Assignments, currentLearnedClauses);
+
+            // Esegue backtrack al livello 0
+            performRestartBacktrack();
+
+            // Aggiorna clausole apprese con quelle ottimizzate
+            updateLearnedClausesFromRestart(restartResult);
+
+            // Reset anti-loop dopo restart
+            resetAntiLoopTracking();
+
+            LOGGER.info("Restart #" + restartResult.restartNumber + " completato");
+            LOGGER.info("Sussunzione: " + restartResult.subsumptionRemovals + " clausole rimosse");
+
+            // Ritorna segnale di continuazione normale (clausola vuota per evitare learning aggiuntivo)
+            return ConflictAnalysisResult.backtrack(Collections.emptyList(), 0);
+
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Errore durante restart", e);
+            // Fallback: continua senza restart
+            return ConflictAnalysisResult.backtrack(Collections.emptyList(), 0);
+        }
+    }
+
+    /**
+     * NUOVO: Ottiene TUTTE le implicazioni in ordine cronologico da tutti i livelli.
+     * Non solo livello 0, ma tutti i livelli di decisione.
+     */
+    private List<AssignedLiteral> getAllImplicationsInChronologicalOrder() {
+        List<AssignedLiteral> allImplications = new ArrayList<>();
+
+        // Raccogli implicazioni da tutti i livelli in ordine cronologico
+        for (int level = 0; level < decisionStack.size(); level++) {
+            List<AssignedLiteral> levelAssignments = decisionStack.getAssignmentsAtLevel(level);
+
+            // Filtra solo le implicazioni (non le decisioni)
+            for (AssignedLiteral assignment : levelAssignments) {
+                if (assignment.isImplication() && assignment.hasAncestorClause()) {
+                    allImplications.add(assignment);
+                }
+            }
+        }
+
+        LOGGER.fine("Raccolte " + allImplications.size() + " implicazioni totali da tutti i livelli");
+        return allImplications;
+    }
+
+    //endregion
+
+    //region INIZIALIZZAZIONE LIVELLO 0 E CLAUSOLE UNITARIE
 
     /**
      * Inizializza livello 0 con tutte le clausole unitarie originali della formula.
@@ -483,362 +983,89 @@ public class CDCLSolver {
 
     //endregion
 
-    //region CONFLICT ANALYSIS CON RESTART INTEGRATO
-
-    /**
-     * Esegue conflict analysis completo con gestione restart opzionale.
-     */
-    private ConflictAnalysisResult executeConflictAnalysis(List<Integer> conflictClause,
-                                                           List<Integer> justifyingClause) {
-        LOGGER.fine("=== CONFLICT ANALYSIS AVANZATO ===");
-        LOGGER.fine("Clausola conflitto: " + conflictClause);
-        LOGGER.fine("Clausola giustificante: " + justifyingClause);
-
-        // CORRETTO: Aggiorna SEMPRE le statistiche per ogni conflitto rilevato
-        conflictCount++;
-        statistics.incrementConflicts();
-
-        // Aggiorna contatori VSIDS per migliorare euristica futura
-        updateVSIDSCountersAfterConflict(conflictClause);
-
-        // NUOVO: Gestione restart se abilitato
-        if (restartTechnique != null) {
-            boolean shouldRestart = restartTechnique.registerConflictAndCheckRestart();
-
-            if (shouldRestart) {
-                // CORRETTO: Aggiorna statistiche restart PRIMA dell'esecuzione
-                statistics.incrementRestarts();
-
-                // Esegue conflict analysis normale prima del restart
-                ConflictAnalysisResult normalResult = performNormalConflictAnalysis(conflictClause, justifyingClause);
-
-                // Se UNSAT, non esegue restart
-                if (normalResult.isUnsatisfiable()) {
-                    LOGGER.info("Formula UNSAT determinata - restart non necessario");
-                    return normalResult;
-                }
-
-                // Esegue restart e ritorna risultato speciale
-                return executeRestartProcedure(normalResult);
-            }
-        }
-
-        // Conflict analysis normale senza restart
-        return performNormalConflictAnalysis(conflictClause, justifyingClause);
-    }
-
-    /**
-     * Esegue conflict analysis normale (esistente).
-     */
-    private ConflictAnalysisResult performNormalConflictAnalysis(List<Integer> conflictClause,
-                                                                 List<Integer> justifyingClause) {
-        // Determina tipo di conflitto e strategia di analisi
-        if (justifyingClause != null) {
-            return analyzeNormalConflictWithExplanation(conflictClause, justifyingClause);
-        } else {
-            return analyzeDirectConflict(conflictClause);
-        }
-    }
-
-    /**
-     * NUOVO: Esegue procedura restart completa.
-     */
-    private ConflictAnalysisResult executeRestartProcedure(ConflictAnalysisResult normalResult) {
-        LOGGER.info("=== ESECUZIONE RESTART PROCEDURA ===");
-
-        try {
-            // Prepara dati per restart
-            List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
-            List<List<Integer>> currentLearnedClauses = new ArrayList<>(learnedClauses);
-
-            // Apprendi clausola dal conflict analysis normale
-            if (normalResult.getLearnedClause() != null && !normalResult.getLearnedClause().isEmpty()) {
-                learnClauseIfNovel(normalResult.getLearnedClause());
-                currentLearnedClauses.add(normalResult.getLearnedClause());
-            }
-
-            // Esegue restart (NON incrementa più statistics.incrementRestarts() qui)
-            RestartTechnique.RestartResult restartResult = restartTechnique.executeRestart(
-                    level0Assignments, currentLearnedClauses);
-
-            // Esegue backtrack al livello 0
-            performRestartBacktrack();
-
-            // Aggiorna clausole apprese con quelle ottimizzate
-            updateLearnedClausesFromRestart(restartResult);
-
-            // NUOVO: Reset anti-loop dopo restart
-            resetAntiLoopTracking();
-
-            LOGGER.info("Restart #" + restartResult.restartNumber + " completato");
-            LOGGER.info("Sussunzione: " + restartResult.subsumptionRemovals + " clausole rimosse");
-
-            // Ritorna segnale di continuazione normale
-            return ConflictAnalysisResult.backtrack(Collections.emptyList(), 0);
-
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Errore durante restart", e);
-            // Fallback: continua con backtrack normale
-            return normalResult;
-        }
-    }
-
-    /**
-     * NUOVO: Reset del tracking anti-loop dopo restart.
-     * Il restart resetta completamente la ricerca quindi è sicuro ripartire da capo.
-     */
-    private void resetAntiLoopTracking() {
-        alreadyChosenVariables.clear();
-        antiLoopResetCount = 0;
-        LOGGER.fine("Anti-loop VSIDS: Reset completo dopo restart");
-    }
-
-    /**
-     * Esegue backtrack al livello 0 per restart.
-     */
-    private void performRestartBacktrack() {
-        int currentLevel = decisionStack.getLevel();
-        int removedAssignments = 0;
-
-        // Rimuove tutti i livelli superiori al livello 0
-        while (decisionStack.getLevel() > 0) {
-            List<AssignedLiteral> removedLevel = decisionStack.deleteLevel();
-
-            // Annulla assegnamenti rimossi
-            for (AssignedLiteral assignment : removedLevel) {
-                assignedValues.put(assignment.getVariable(), null);
-                removedAssignments++;
-            }
-        }
-
-        LOGGER.info("Restart backtrack: " + removedAssignments + " assegnamenti eliminati, livello: " + decisionStack.getLevel());
-    }
-
-    /**
-     * Aggiorna clausole apprese con quelle ottimizzate dal restart.
-     */
-    private void updateLearnedClausesFromRestart(RestartTechnique.RestartResult restartResult) {
-        // Sostituisce clausole apprese con quelle ottimizzate
-        learnedClauses.clear();
-        learnedClauses.addAll(restartResult.optimizedLearnedClauses);
-
-        LOGGER.fine("Clausole apprese aggiornate post-restart: " + learnedClauses.size());
-    }
-
-    //endregion
-
     //region CONFLICT ANALYSIS METODI ESISTENTI
 
     /**
-     * Analizza conflitto normale generando spiegazione tra clausola giustificante e conflitto.
+     * CORRETTO: Identifica l'ultima clausola giustificante che ha causato una propagazione
+     * prima che si verificasse il conflitto.
+     *
+     * Algoritmo:
+     * 1. Trova l'ultima implicazione fatta cronologicamente
+     * 2. Verifica che sia coinvolta nel conflitto corrente
+     * 3. Ritorna la sua clausola giustificante
+     *
+     * @param conflictClause clausola che è andata in conflitto
+     * @return ultima clausola giustificante o null se non trovata
      */
-    private ConflictAnalysisResult analyzeNormalConflictWithExplanation(List<Integer> conflictClause,
-                                                                        List<Integer> justifyingClause) {
-        LOGGER.info("Analisi conflitto normale con spiegazione matematica");
+    private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
+        LOGGER.fine("=== RICERCA ULTIMA CLAUSOLA GIUSTIFICANTE ===");
+        LOGGER.fine("Clausola in conflitto: " + conflictClause);
 
-        // Genera spiegazione tra le due clausole
-        List<Integer> explanation = generateMathematicalExplanation(justifyingClause, conflictClause);
+        // Ottieni TUTTE le implicazioni in ordine cronologico (tutti i livelli)
+        List<AssignedLiteral> allImplications = getAllImplicationsInChronologicalOrder();
 
-        LOGGER.info("Spiegazione generata: " + justifyingClause + " ∧ " + conflictClause + " ⊢ " + explanation);
-
-        // Registra passo di spiegazione per prova
-        proofGenerator.recordResolutionStep(justifyingClause, conflictClause, explanation);
-
-        // Verifica se derivata clausola vuota (UNSAT)
-        if (explanation.isEmpty()) {
-            LOGGER.info("*** CLAUSOLA VUOTA DERIVATA - FORMULA UNSAT ***");
-            return ConflictAnalysisResult.unsatisfiable();
-        }
-
-        // Processa risultato spiegazione
-        return processExplanationResult(explanation);
-    }
-
-    /**
-     * Analizza conflitto diretto su clausola completamente falsificata.
-     */
-    private ConflictAnalysisResult analyzeDirectConflict(List<Integer> conflictClause) {
-        LOGGER.info("Analisi conflitto diretto su clausola falsificata");
-
-        // Verifica se tutti letterali sono al livello 0
-        if (areAllLiteralsAtLevel0(conflictClause)) {
-            LOGGER.info("Conflitto diretto al livello 0 - avvio spiegazioni sequenziali");
-            return executeSequentialExplanationsForLevel0(conflictClause);
-        }
-
-        // Conflitto a livelli superiori
-        LOGGER.info("Conflitto diretto a livelli superiori - formula UNSAT");
-        return ConflictAnalysisResult.unsatisfiable();
-    }
-
-    /**
-     * Processa il risultato di una spiegazione determinando azione appropriata.
-     */
-    private ConflictAnalysisResult processExplanationResult(List<Integer> explanation) {
-        // CASO 1: Spiegazione unitaria
-        if (explanation.size() == 1) {
-            return processUnitaryExplanation(explanation.get(0));
-        }
-
-        // CASO 2: Verifica conflitto totale con livello 0
-        if (areAllLiteralsInConflictWithLevel0(explanation)) {
-            return executeSequentialExplanationsForLevel0(explanation);
-        }
-
-        // CASO 3: Spiegazione normale - calcola livello backtrack
-        int backtrackLevel = calculateOptimalBacktrackLevel(explanation);
-        return ConflictAnalysisResult.backtrack(explanation, backtrackLevel);
-    }
-
-    /**
-     * Processa spiegazione unitaria verificando conflitti con livello 0.
-     */
-    private ConflictAnalysisResult processUnitaryExplanation(Integer unitLiteral) {
-        Integer variable = Math.abs(unitLiteral);
-        Boolean expectedValue = unitLiteral > 0;
-
-        // Verifica conflitto con assegnamento livello 0
-        AssignedLiteral existingAssignment = assignedValues.get(variable);
-        if (existingAssignment != null && findVariableLevel(variable) == 0) {
-            if (!existingAssignment.getValue().equals(expectedValue)) {
-                // Conflitto con livello 0 → genera clausola vuota
-                List<Integer> contradictoryUnit = Arrays.asList(-unitLiteral);
-                List<Integer> emptyClause = Collections.emptyList();
-                proofGenerator.recordResolutionStep(Arrays.asList(unitLiteral), contradictoryUnit, emptyClause);
-
-                LOGGER.info("Conflitto unitario con livello 0 - UNSAT derivato");
-                return ConflictAnalysisResult.unsatisfiable();
-            }
-        }
-
-        // Nessun conflitto - backtrack al livello 0
-        return ConflictAnalysisResult.backtrack(Arrays.asList(unitLiteral), 0);
-    }
-
-    /**
-     * Esegue spiegazioni sequenziali per risoluzione conflitti al livello 0.
-     * CORRETTO: Utilizza clausole giustificanti in ordine cronologico inverso.
-     */
-    private ConflictAnalysisResult executeSequentialExplanationsForLevel0(List<Integer> initialClause) {
-        LOGGER.info("=== SPIEGAZIONI SEQUENZIALI LIVELLO 0 (CDCL CORRETTO) ===");
-        LOGGER.info("Clausola iniziale: " + initialClause);
-
-        List<Integer> currentClause = new ArrayList<>(initialClause);
-        int explanationSteps = 0;
-        final int MAX_EXPLANATION_STEPS = 100;
-
-        // NUOVO: Ottieni la lista cronologica delle implicazioni al livello 0
-        List<AssignedLiteral> level0Implications = getLevel0ImplicationsInChronologicalOrder();
-
-        LOGGER.info("Implicazioni livello 0 in ordine cronologico:");
-        for (int i = 0; i < level0Implications.size(); i++) {
-            AssignedLiteral impl = level0Implications.get(i);
-            LOGGER.info("  " + (i+1) + ". " + impl.getVariable() + " = " + impl.getValue() +
-                    " giustificata da " + impl.getAncestorClause());
-        }
-
-        // Inizia dall'ultima implicazione e vai a ritroso
-        int currentImplicationIndex = level0Implications.size() - 1;
-
-        while (!currentClause.isEmpty() && explanationSteps < MAX_EXPLANATION_STEPS && currentImplicationIndex >= 0) {
-            explanationSteps++;
-
-            // CORRETTO: Trova la prossima clausola giustificante da usare
-            List<Integer> justifyingClause = findNextJustifyingClauseForSequentialExplanation(
-                    currentClause, level0Implications, currentImplicationIndex);
-
-            if (justifyingClause == null) {
-                // Se non trova clausola giustificante, prova con l'implicazione precedente
-                currentImplicationIndex--;
-                continue;
-            }
-
-            // Genera prossima spiegazione
-            List<Integer> nextClause = generateMathematicalExplanation(currentClause, justifyingClause);
-
-            LOGGER.info("Spiegazione sequenziale " + explanationSteps + ": " +
-                    currentClause + " ∧ " + justifyingClause + " ⊢ " + nextClause);
-
-            // Registra passo per prova
-            proofGenerator.recordResolutionStep(currentClause, justifyingClause, nextClause);
-
-            // Aggiorna clausola corrente
-            currentClause = nextClause;
-
-            // Verifica clausola vuota
-            if (currentClause.isEmpty()) {
-                LOGGER.info("*** CLAUSOLA VUOTA DERIVATA DA SPIEGAZIONI SEQUENZIALI (Step " + explanationSteps + ") ***");
-                return ConflictAnalysisResult.unsatisfiable();
-            }
-
-            // Passa all'implicazione precedente per il prossimo step
-            currentImplicationIndex--;
-        }
-
-        if (explanationSteps >= MAX_EXPLANATION_STEPS) {
-            LOGGER.warning("Spiegazioni sequenziali interrotte per limite step: " + MAX_EXPLANATION_STEPS);
-        }
-
-        LOGGER.warning("Spiegazioni sequenziali terminate senza clausola vuota. Clausola finale: " + currentClause);
-        return ConflictAnalysisResult.unsatisfiable();
-    }
-
-    /**
-     * NUOVO: Ottiene tutte le implicazioni del livello 0 in ordine cronologico.
-     */
-    private List<AssignedLiteral> getLevel0ImplicationsInChronologicalOrder() {
-        List<AssignedLiteral> level0Assignments = decisionStack.getAssignmentsAtLevel(0);
-        List<AssignedLiteral> implications = new ArrayList<>();
-
-        // Filtra solo le implicazioni (esclude le clausole unitarie auto-giustificate)
-        for (AssignedLiteral assignment : level0Assignments) {
-            if (assignment.isImplication() && assignment.hasAncestorClause()) {
-                implications.add(assignment);
-            }
-        }
-
-        return implications;
-    }
-
-    /**
-     * NUOVO: Trova la prossima clausola giustificante da usare nelle spiegazioni sequenziali.
-     * Cerca una clausola giustificante che sia rilevante per la clausola corrente.
-     */
-    private List<Integer> findNextJustifyingClauseForSequentialExplanation(
-            List<Integer> currentClause,
-            List<AssignedLiteral> implications,
-            int currentIndex) {
-
-        if (currentIndex < 0 || currentIndex >= implications.size()) {
+        if (allImplications.isEmpty()) {
+            LOGGER.warning("Nessuna implicazione trovata per conflitto");
             return null;
         }
 
-        // Prendi l'implicazione corrente
-        AssignedLiteral currentImplication = implications.get(currentIndex);
-        Integer variable = currentImplication.getVariable();
-        Boolean value = currentImplication.getValue();
+        // Cerca dall'ultima implicazione verso la prima
+        for (int i = allImplications.size() - 1; i >= 0; i--) {
+            AssignedLiteral lastImplication = allImplications.get(i);
+            Integer variable = lastImplication.getVariable();
+            Boolean value = lastImplication.getValue();
 
-        // Verifica se questa variabile è coinvolta nella clausola corrente
-        boolean isRelevant = false;
-        for (Integer literal : currentClause) {
+            LOGGER.finest("Controllo implicazione #" + i + ": " + variable + " = " + value +
+                    " giustificata da " + lastImplication.getAncestorClause());
+
+            // Verifica se questa variabile è coinvolta nel conflitto
+            if (isVariableInvolvedInConflict(variable, value, conflictClause)) {
+                List<Integer> justifyingClause = lastImplication.getAncestorClause();
+
+                LOGGER.info("*** ULTIMA CLAUSOLA GIUSTIFICANTE TROVATA ***");
+                LOGGER.info("Variabile: " + variable + " = " + value);
+                LOGGER.info("Clausola giustificante: " + justifyingClause);
+
+                return justifyingClause;
+            }
+        }
+
+        LOGGER.warning("Nessuna clausola giustificante trovata per il conflitto: " + conflictClause);
+        return null;
+    }
+
+    /**
+     * NUOVO: Verifica se una variabile con il suo valore è coinvolta nel conflitto.
+     *
+     * Una variabile è coinvolta se:
+     * - La variabile appare nella clausola conflitto
+     * - Il valore assegnato rende falso il letterale nella clausola
+     *
+     * @param variable variabile da controllare
+     * @param assignedValue valore assegnato alla variabile
+     * @param conflictClause clausola in conflitto
+     * @return true se la variabile contribuisce al conflitto
+     */
+    private boolean isVariableInvolvedInConflict(Integer variable, Boolean assignedValue, List<Integer> conflictClause) {
+        for (Integer literal : conflictClause) {
             int literalVariable = Math.abs(literal);
+
             if (literalVariable == variable.intValue()) {
-                // Verifica se è in conflitto con l'assegnamento
-                boolean literalValue = literal > 0;
-                if (literalValue != value) {
-                    isRelevant = true;
-                    break;
+                // La variabile è presente nella clausola conflitto
+                boolean literalPolarity = literal > 0;
+
+                // Verifica se l'assegnamento rende falso questo letterale
+                boolean literalIsFalse = (literalPolarity && !assignedValue) || (!literalPolarity && assignedValue);
+
+                if (literalIsFalse) {
+                    LOGGER.finest("Variabile " + variable + "=" + assignedValue +
+                            " rende falso il letterale " + literal + " nella clausola conflitto");
+                    return true;
                 }
             }
         }
 
-        if (isRelevant) {
-            LOGGER.fine("Clausola giustificante trovata per " + variable + " = " + value +
-                    ": " + currentImplication.getAncestorClause());
-            return currentImplication.getAncestorClause();
-        }
-
-        return null;
+        return false;
     }
 
     /**
@@ -872,61 +1099,6 @@ public class CDCLSolver {
 
         LOGGER.finest("Spiegazione completata: " + explanationResult);
         return explanationResult;
-    }
-
-    /**
-     * Verifica se tutti i letterali di una clausola sono assegnati al livello 0.
-     */
-    private boolean areAllLiteralsAtLevel0(List<Integer> clause) {
-        for (Integer literal : clause) {
-            Integer variable = Math.abs(literal);
-            if (findVariableLevel(variable) != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Verifica se tutti i letterali sono in conflitto con assegnamenti livello 0.
-     */
-    private boolean areAllLiteralsInConflictWithLevel0(List<Integer> clause) {
-        for (Integer literal : clause) {
-            Integer variable = Math.abs(literal);
-            AssignedLiteral assignment = assignedValues.get(variable);
-
-            if (assignment == null || findVariableLevel(variable) != 0) {
-                return false;
-            }
-
-            Boolean expectedValue = literal > 0;
-            if (assignment.getValue().equals(expectedValue)) {
-                return false; // Non in conflitto
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Calcola livello ottimale per backtracking basato su clausola appresa.
-     */
-    private int calculateOptimalBacktrackLevel(List<Integer> learnedClause) {
-        if (learnedClause.size() == 1) {
-            // Clausola unitaria → backtrack al livello 0 per auto-giustificazione
-            return 0;
-        } else {
-            // Clausola multipla → trova livello dove diventa assertiva
-            return findAssertionLevel(learnedClause);
-        }
-    }
-
-    /**
-     * Trova livello appropriato dove clausola appresa diventa assertiva.
-     */
-    private int findAssertionLevel(List<Integer> learnedClause) {
-        int currentLevel = decisionStack.getLevel();
-        // Strategia semplificata: backtrack di un livello per permettere assertion
-        return Math.max(0, currentLevel - 1);
     }
 
     /**
@@ -1067,6 +1239,52 @@ public class CDCLSolver {
 
     //endregion
 
+    //region RESTART E ANTI-LOOP
+
+    /**
+     * NUOVO: Reset del tracking anti-loop dopo restart.
+     * Il restart resetta completamente la ricerca quindi è sicuro ripartire da capo.
+     */
+    private void resetAntiLoopTracking() {
+        alreadyChosenVariables.clear();
+        antiLoopResetCount = 0;
+        LOGGER.fine("Anti-loop VSIDS: Reset completo dopo restart");
+    }
+
+    /**
+     * Esegue backtrack al livello 0 per restart.
+     */
+    private void performRestartBacktrack() {
+        int currentLevel = decisionStack.getLevel();
+        int removedAssignments = 0;
+
+        // Rimuove tutti i livelli superiori al livello 0
+        while (decisionStack.getLevel() > 0) {
+            List<AssignedLiteral> removedLevel = decisionStack.deleteLevel();
+
+            // Annulla assegnamenti rimossi
+            for (AssignedLiteral assignment : removedLevel) {
+                assignedValues.put(assignment.getVariable(), null);
+                removedAssignments++;
+            }
+        }
+
+        LOGGER.info("Restart backtrack: " + removedAssignments + " assegnamenti eliminati, livello: " + decisionStack.getLevel());
+    }
+
+    /**
+     * Aggiorna clausole apprese con quelle ottimizzate dal restart.
+     */
+    private void updateLearnedClausesFromRestart(RestartTechnique.RestartResult restartResult) {
+        // Sostituisce clausole apprese con quelle ottimizzate
+        learnedClauses.clear();
+        learnedClauses.addAll(restartResult.optimizedLearnedClauses);
+
+        LOGGER.fine("Clausole apprese aggiornate post-restart: " + learnedClauses.size());
+    }
+
+    //endregion
+
     //region UNIT PROPAGATION E RILEVAMENTO CONFLITTI
 
     /**
@@ -1196,36 +1414,12 @@ public class CDCLSolver {
         decisionStack.addImpliedLiteral(variable, value, clause);
         statistics.incrementPropagations();
 
-        LOGGER.fine("Propagazione unitaria eseguita: " + variable + " = " + value + " derivata da " + clause);
+        LOGGER.fine("*** PROPAGAZIONE UNITARIA ***");
+        LOGGER.fine("Variabile: " + variable + " = " + value);
+        LOGGER.fine("Giustificata da: " + clause);
+        LOGGER.fine("Livello: " + decisionStack.getLevel());
+
         return true;
-    }
-
-    /**
-     * CORRETTO: Identifica la clausola che ha giustificato l'ULTIMA propagazione coinvolta nel conflitto.
-     * Cerca l'implicazione più recente cronologicamente, non per livello.
-     */
-    private List<Integer> findJustifyingClauseForConflict(List<Integer> conflictClause) {
-        // Ottieni tutte le implicazioni del livello 0 in ordine cronologico
-        List<AssignedLiteral> level0Implications = getLevel0ImplicationsInChronologicalOrder();
-
-        // Cerca dall'ultima implicazione verso la prima
-        for (int i = level0Implications.size() - 1; i >= 0; i--) {
-            AssignedLiteral assignment = level0Implications.get(i);
-            Integer variable = assignment.getVariable();
-
-            // Verifica se questa variabile è coinvolta nel conflitto
-            for (Integer literal : conflictClause) {
-                int literalVariable = Math.abs(literal);
-                if (literalVariable == variable.intValue()) {
-                    LOGGER.fine("Ultima implicazione coinvolta nel conflitto: " + variable +
-                            " giustificata da " + assignment.getAncestorClause());
-                    return assignment.getAncestorClause();
-                }
-            }
-        }
-
-        LOGGER.warning("Nessuna implicazione trovata per conflitto: " + conflictClause);
-        return null;
     }
 
     //endregion

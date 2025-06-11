@@ -41,7 +41,7 @@ import java.util.stream.Stream;
  * - Tecnica restart per prevenzione stalli (NUOVO)
  *
  * @author Amos Lo Verde
- * @version 1.8.3
+ * @version 1.8.4
  */
 public final class Main {
 
