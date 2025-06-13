@@ -4,66 +4,49 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * RISULTATO SAT - Rappresentazione completa dell'esito di risoluzione SAT
+ * RISULTATO SAT - Contenitore immutabile per esiti di risoluzione booleana
  *
- * Incapsula il risultato completo di una risoluzione di soddisfacibilità booleana,
- * fornendo accesso unificato a tutti i dati prodotti dall'algoritmo CDCL:
- * modello SAT, prove UNSAT, statistiche di esecuzione e metadata.
+ * Rappresenta il risultato completo di una risoluzione SAT con accesso unificato
+ * a tutti i dati prodotti dall'algoritmo CDCL: modello, prove, statistiche.
  *
- * COMPONENTI PRINCIPALI:
- * • Esito booleano: SAT (soddisfacibile) vs UNSAT (insoddisfacibile)
- * • Modello SAT: Assegnamento completo variabili per formule soddisfacibili
- * • Prova UNSAT: Dimostrazione matematica per formule insoddisfacibili
- * • Statistiche: Metriche dettagliate di performance e complessità
+ * DESIGN PRINCIPLES:
+ * • Immutabilità garantita per thread-safety
+ * • Factory methods per costruzione type-safe
+ * • Validazione rigorosa per consistenza logica
+ * • Output professionale per reporting
  *
- * CARATTERISTICHE DESIGN:
- * • Immutabilità garantita: Thread-safe e sicuro per caching
- * • Validazione rigorosa: Consistenza logica tra componenti
- * • Factory methods: Costruzione type-safe per casi specifici
- * • Output professionale: Formati standard per reporting
- *
- * UTILIZZO TIPICO:
- * - Per formule SAT: accesso al modello soddisfacente
- * - Per formule UNSAT: accesso alla prova matematica
- * - Per analisi performance: statistiche complete di esecuzione
- * - Per reporting: output formattato human-readable
+ * COMPONENTI:
+ * • Esito: SAT (soddisfacibile) vs UNSAT (insoddisfacibile)
+ * • Modello: Assegnamento variabili per formule SAT
+ * • Prova: Dimostrazione matematica per formule UNSAT
+ * • Statistiche: Metriche performance e complessità
  *
  */
 public class SATResult {
 
-    //region ATTRIBUTI CORE DEL RISULTATO
+    //region ATTRIBUTI CORE
 
     /**
      * Indica se la formula è soddisfacibile.
-     * • true: formula SAT, esiste modello soddisfacente
-     * • false: formula UNSAT, nessun modello possibile
-     * Invariante: determina quale tra modello/prova è disponibile
+     * true = SAT (esiste modello), false = UNSAT (nessun modello possibile)
      */
     private final boolean satisfiable;
 
     /**
-     * Assegnamento completo delle variabili per formule SAT.
-     * Mappa nome_variabile → valore_booleano per tutte le variabili.
-     * • Non null per risultati SAT
-     * • Null per risultati UNSAT
-     * Invariante: consistente con flag satisfiable
+     * Assegnamento completo variabili per formule SAT.
+     * Non null per SAT, null per UNSAT.
      */
     private final Map<String, Boolean> assignment;
 
     /**
      * Prova matematica di insoddisfacibilità per formule UNSAT.
-     * Sequenza completa di spiegazioni che conducono alla clausola vuota.
-     * • Non null per risultati UNSAT
-     * • Null per risultati SAT
-     * Invariante: consistente con flag satisfiable
+     * Non null per UNSAT, null per SAT.
      */
     private final String proof;
 
     /**
      * Statistiche dettagliate di esecuzione dell'algoritmo CDCL.
-     * Include metriche di performance, complessità e resource usage.
-     * • Sempre non null per garantire tracciabilità completa
-     * • Default inizializzato se non fornito esplicitamente
+     * Sempre disponibili per tracciabilità completa.
      */
     private final SATStatistics statistics;
 
@@ -72,41 +55,33 @@ public class SATResult {
     //region COSTRUZIONE E VALIDAZIONE
 
     /**
-     * Costruisce risultato SAT completo con validazione rigorosa dei parametri.
+     * Costruisce risultato SAT con validazione completa dei parametri.
      *
-     * VALIDAZIONI APPLICATE:
+     * VALIDAZIONI:
      * • Consistenza logica: satisfiable ↔ (assignment != null)
      * • Esclusività: modello e prova mutuamente esclusivi
-     * • Completezza: statistiche sempre presenti
-     * • Integrità: assignment non vuoto per formule SAT
+     * • Completezza: assignment non vuoto per SAT
      *
      * @param satisfiable true se formula soddisfacibile
-     * @param assignment assegnamento variabili (richiesto per SAT, null per UNSAT)
+     * @param assignment modello variabili (richiesto per SAT, null per UNSAT)
      * @param proof prova insoddisfacibilità (richiesta per UNSAT, null per SAT)
      * @param statistics metriche esecuzione (null → default inizializzato)
      * @throws IllegalArgumentException se parametri inconsistenti
      */
     public SATResult(boolean satisfiable, Map<String, Boolean> assignment, String proof, SATStatistics statistics) {
-        // Validazione consistenza logica parametri
         validateParameterConsistency(satisfiable, assignment, proof);
 
-        // Assegnazione con inizializzazione sicura
         this.satisfiable = satisfiable;
         this.assignment = assignment;
         this.proof = proof;
         this.statistics = statistics != null ? statistics : new SATStatistics();
 
-        // Validazione post-costruzione per robustezza
         validateConstructedState();
     }
 
     /**
      * Costruttore semplificato senza statistiche esplicite.
-     * Utilizzato quando statistiche non sono immediatamente disponibili.
-     *
-     * @param satisfiable esito soddisfacibilità
-     * @param assignment modello variabili (per SAT)
-     * @param proof dimostrazione insoddisfacibilità (per UNSAT)
+     * Utile quando statistiche non sono immediatamente disponibili.
      */
     public SATResult(boolean satisfiable, Map<String, Boolean> assignment, String proof) {
         this(satisfiable, assignment, proof, new SATStatistics());
@@ -129,7 +104,6 @@ public class SATResult {
             if (assignment != null) {
                 throw new IllegalArgumentException("Risultato UNSAT non può avere assegnamento variabili");
             }
-            // Nota: prova può essere null se generazione fallita
         }
     }
 
@@ -137,17 +111,14 @@ public class SATResult {
      * Valida stato interno dopo costruzione per robustezza.
      */
     private void validateConstructedState() {
-        // Verifica immutabilità potenziale dell'assignment
         if (assignment != null) {
-            // Test di accesso per validazione struttura
             try {
-                assignment.size(); // Trigger potenziali eccezioni
+                assignment.size(); // Test accesso per validazione struttura
             } catch (Exception e) {
                 throw new IllegalArgumentException("Assignment map malformato", e);
             }
         }
 
-        // Verifica statistiche inizializzate
         if (statistics == null) {
             throw new IllegalStateException("Statistiche non inizializzate correttamente");
         }
@@ -187,10 +158,6 @@ public class SATResult {
 
     /**
      * Crea risultato SAT con solo modello (statistiche default).
-     * Convenienza per casi dove statistiche non sono critiche.
-     *
-     * @param assignment modello delle variabili
-     * @return risultato SAT con statistiche default
      */
     public static SATResult satisfiable(Map<String, Boolean> assignment) {
         return satisfiable(assignment, new SATStatistics());
@@ -198,10 +165,6 @@ public class SATResult {
 
     /**
      * Crea risultato UNSAT con solo prova (statistiche default).
-     * Convenienza per casi dove statistiche non sono critiche.
-     *
-     * @param proof dimostrazione insoddisfacibilità
-     * @return risultato UNSAT con statistiche default
      */
     public static SATResult unsatisfiable(String proof) {
         return unsatisfiable(proof, new SATStatistics());
@@ -209,17 +172,17 @@ public class SATResult {
 
     //endregion
 
-    //region ACCESSORS E QUERY METHODS
+    //region ACCESSORS E QUERY
 
     /**
-     * @return true se la formula è soddisfacibile
+     * Verifica se la formula è soddisfacibile.
      */
     public boolean isSatisfiable() {
         return satisfiable;
     }
 
     /**
-     * @return true se la formula è insoddisfacibile
+     * Verifica se la formula è insoddisfacibile.
      */
     public boolean isUnsatisfiable() {
         return !satisfiable;
@@ -227,8 +190,7 @@ public class SATResult {
 
     /**
      * Restituisce modello delle variabili per formule SAT.
-     *
-     * @return mappa nome_variabile → valore per formule SAT, null per UNSAT
+     * @return mappa nome_variabile → valore per SAT, null per UNSAT
      */
     public Map<String, Boolean> getAssignment() {
         return assignment;
@@ -236,8 +198,7 @@ public class SATResult {
 
     /**
      * Restituisce prova di insoddisfacibilità per formule UNSAT.
-     *
-     * @return stringa prova matematica per formule UNSAT, null per SAT
+     * @return stringa prova matematica per UNSAT, null per SAT
      */
     public String getProof() {
         return proof;
@@ -245,7 +206,6 @@ public class SATResult {
 
     /**
      * Restituisce statistiche complete di esecuzione.
-     *
      * @return metriche dettagliate sempre disponibili
      */
     public SATStatistics getStatistics() {
@@ -254,8 +214,6 @@ public class SATResult {
 
     /**
      * Verifica disponibilità modello soddisfacente.
-     *
-     * @return true se modello disponibile e non vuoto
      */
     public boolean hasModel() {
         return assignment != null && !assignment.isEmpty();
@@ -263,8 +221,6 @@ public class SATResult {
 
     /**
      * Verifica disponibilità prova di insoddisfacibilità.
-     *
-     * @return true se prova disponibile e non vuota
      */
     public boolean hasProof() {
         return proof != null && !proof.trim().isEmpty();
@@ -272,11 +228,16 @@ public class SATResult {
 
     /**
      * Conta numero di variabili nel modello SAT.
-     *
-     * @return numero variabili assegnate, 0 se UNSAT o modello vuoto
      */
     public int getModelSize() {
         return assignment != null ? assignment.size() : 0;
+    }
+
+    /**
+     * Verifica se il risultato è completo (SAT con modello O UNSAT con prova).
+     */
+    public boolean isComplete() {
+        return (satisfiable && hasModel()) || (!satisfiable && hasProof());
     }
 
     //endregion
@@ -285,15 +246,12 @@ public class SATResult {
 
     /**
      * Genera rappresentazione testuale completa per output utente.
-     * Formato professionale compatibile con standard accademici e industriali.
+     * Formato professionale compatibile con standard accademici.
      *
-     * STRUTTURA OUTPUT:
+     * STRUTTURA:
      * • Header con esito (SAT/UNSAT)
      * • Contenuto principale (modello o prova)
      * • Gestione intelligente dimensioni per leggibilità
-     * • Messaggi informativi per casi speciali
-     *
-     * @return stringa formattata per presentazione
      */
     @Override
     public String toString() {
@@ -309,7 +267,7 @@ public class SATResult {
     }
 
     /**
-     * Genera output formattato per risultati SAT.
+     * Genera output formattato per risultati SAT con modello.
      */
     private String generateSATOutput() {
         StringBuilder satOutput = new StringBuilder();
@@ -317,7 +275,10 @@ public class SATResult {
         satOutput.append("Modello:\n");
 
         if (hasModel()) {
-            formatModelOutput(satOutput);
+            assignment.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> satOutput.append(entry.getKey())
+                            .append(" → ").append(entry.getValue()).append("\n"));
         } else {
             satOutput.append("Errore: modello non disponibile per risultato SAT.\n");
         }
@@ -326,14 +287,20 @@ public class SATResult {
     }
 
     /**
-     * Genera output formattato per risultati UNSAT.
+     * Genera output formattato per risultati UNSAT con prova.
      */
     private String generateUNSATOutput() {
         StringBuilder unsatOutput = new StringBuilder();
         unsatOutput.append("UNSAT\n");
 
         if (hasProof()) {
-            formatProofOutput(unsatOutput);
+            if (shouldDisplayFullProof()) {
+                unsatOutput.append("Prova di insoddisfacibilità:\n");
+                unsatOutput.append(proof);
+            } else {
+                unsatOutput.append("Prova troppo grande per visualizzazione completa.\n");
+                unsatOutput.append("Dimensione prova: ").append(statistics.getProofSize()).append(" passi.\n");
+            }
         } else {
             unsatOutput.append("Prova di insoddisfacibilità non disponibile.\n");
         }
@@ -342,46 +309,16 @@ public class SATResult {
     }
 
     /**
-     * Formatta modello SAT per output leggibile.
-     */
-    private void formatModelOutput(StringBuilder output) {
-        // Ordinamento per leggibilità
-        assignment.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-                    String variableName = entry.getKey();
-                    Boolean value = entry.getValue();
-                    output.append(variableName).append(" → ").append(value).append("\n");
-                });
-    }
-
-    /**
-     * Formatta prova UNSAT per output con gestione dimensioni.
-     */
-    private void formatProofOutput(StringBuilder output) {
-        // Gestione intelligente dimensioni prova
-        if (shouldDisplayFullProof()) {
-            output.append("Prova di insoddisfacibilità:\n");
-            output.append(proof);
-        } else {
-            output.append("Prova troppo grande per visualizzazione completa.\n");
-            output.append("Dimensione prova: ").append(statistics.getProofSize()).append(" passi.\n");
-        }
-    }
-
-    /**
-     * Determina se visualizzare prova completa basandosi su dimensioni.
+     * Determina se visualizzare prova completa basandosi su dimensioni ragionevoli.
      */
     private boolean shouldDisplayFullProof() {
-        // Criteri per visualizzazione: dimensione ragionevole E statistiche disponibili
         return statistics.getProofSize() > 0 &&
                 statistics.getProofSize() < 500 &&
-                proof.length() < 10000; // Limite caratteri per leggibilità
+                proof.length() < 10000;
     }
 
     /**
-     * Genera rappresentazione compatta per logging e debugging.
-     *
+     * Genera rappresentazione compatta per logging rapido.
      * @return stringa sintetica con informazioni essenziali
      */
     public String toCompactString() {
@@ -391,9 +328,20 @@ public class SATResult {
                 statistics.getExecutionTimeMs());
     }
 
+    /**
+     * Estrae riepilogo esecuzione per reporting rapido.
+     */
+    public String getExecutionSummary() {
+        return String.format("Esito: %s | Decisioni: %d | Conflitti: %d | Tempo: %dms",
+                satisfiable ? "SAT" : "UNSAT",
+                statistics.getDecisions(),
+                statistics.getConflicts(),
+                statistics.getExecutionTimeMs());
+    }
+
     //endregion
 
-    //region UGUAGLIANZA E HASH
+    //region UGUAGLIANZA E VALIDAZIONE
 
     /**
      * Uguaglianza basata su contenuto logico (esito, modello/prova).
@@ -418,23 +366,8 @@ public class SATResult {
         return Objects.hash(satisfiable, assignment, proof);
     }
 
-    //endregion
-
-    //region UTILITÀ E CONVERSIONI
-
-    /**
-     * Verifica se il risultato rappresenta una risoluzione completa.
-     *
-     * @return true se SAT con modello O UNSAT con prova
-     */
-    public boolean isComplete() {
-        return (satisfiable && hasModel()) || (!satisfiable && hasProof());
-    }
-
     /**
      * Verifica se il risultato ha statistiche significative.
-     *
-     * @return true se statistiche contengono dati di esecuzione
      */
     public boolean hasSignificantStatistics() {
         return statistics.getDecisions() > 0 ||
@@ -443,26 +376,12 @@ public class SATResult {
     }
 
     /**
-     * Estrae riepilogo esecuzione per reporting rapido.
-     *
-     * @return stringa con metriche chiave
-     */
-    public String getExecutionSummary() {
-        return String.format("Esito: %s | Decisioni: %d | Conflitti: %d | Tempo: %dms",
-                satisfiable ? "SAT" : "UNSAT",
-                statistics.getDecisions(),
-                statistics.getConflicts(),
-                statistics.getExecutionTimeMs());
-    }
-
-    /**
-     * Verifica qualità del risultato per validazione.
-     *
+     * Verifica qualità del risultato per validazione completa.
      * @return true se risultato è ben formato e completo
      */
     public boolean isWellFormed() {
         try {
-            // Validazione basic consistency
+            // Validazione consistenza base
             if (satisfiable && !hasModel()) return false;
             if (!satisfiable && !hasProof()) return false;
 
