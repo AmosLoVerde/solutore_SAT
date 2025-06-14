@@ -16,7 +16,7 @@ import java.util.logging.Level;
  * per prevenzione stalli durante la ricerca SAT. Il restart è attivato solo quando
  * esplicitamente richiesto tramite configurazione.
  *
- * NUOVO: Anti-loop VSIDS avanzato - Traccia tutte le variabili già scelte e le esclude
+ * Anti-loop VSIDS avanzato - Traccia tutte le variabili già scelte e le esclude
  * finché esistono alternative non ancora tentate, prevenendo loop complessi.
  */
 public class CDCLSolver {
@@ -31,7 +31,7 @@ public class CDCLSolver {
     /** Stack gerarchico per gestione livelli di decisione e backtracking */
     private final DecisionStack decisionStack;
 
-    /** Mappa variabile → assegnamento corrente (null = non assegnata) */
+    /** Mappa variabile -> assegnamento corrente (null = non assegnata) */
     private final Map<Integer, AssignedLiteral> assignedValues;
 
     /** Contatori VSIDS per euristica selezione variabili dinamica */
@@ -43,7 +43,7 @@ public class CDCLSolver {
     /** Generatore prove matematiche per formule UNSAT */
     private final ProofGenerator proofGenerator;
 
-    /** Mapping letterale → clausola unitaria originale per spiegazioni livello 0 */
+    /** Mapping letterale -> clausola unitaria originale per spiegazioni livello 0 */
     private final Map<Integer, List<Integer>> unitClauseMapping;
 
     //endregion
@@ -62,21 +62,47 @@ public class CDCLSolver {
     /** Flag per interruzione esterna controllata (gestione timeout) */
     private volatile boolean interrupted = false;
 
-    /** NUOVO: Tecnica restart opzionale (null se non abilitata) */
+    /** Tecnica restart opzionale (null se non abilitata) */
     private RestartTechnique restartTechnique;
+
+    /** Contatore spiegazioni generate (diverse dai conflitti) */
+    private int explanationCount;
+
+    /** Contatore delle clausole apprese */
+    private int learnedClausesCount;
+
+    /** Statistiche per ogni decisione */
+    private final List<DecisionStatistics> decisionStatisticsList;          // ADDED
+
+    /** Classe interna per statistiche per decisione */
+    private static class DecisionStatistics {                               // ADDED
+        int decisionNumber;
+        int propagations;
+        int conflicts;
+        int explanations;
+        int learnedClauses;
+
+        DecisionStatistics(int decisionNumber) {
+            this.decisionNumber = decisionNumber;
+            this.propagations = 0;
+            this.conflicts = 0;
+            this.explanations = 0;
+            this.learnedClauses = 0;
+        }
+    }
 
     //endregion
 
-    //region NUOVO: ANTI-LOOP VSIDS AVANZATO
+    //region ANTI-LOOP VSIDS AVANZATO
 
     /**
-     * NUOVO: Set di tutte le variabili già scelte almeno una volta.
+     * Set di tutte le variabili già scelte almeno una volta.
      * Utilizzato per escludere variabili già tentate finché esistono alternative.
      */
     private final Set<Integer> alreadyChosenVariables;
 
     /**
-     * NUOVO: Contatore cicli di reset per statistiche e debugging.
+     * Contatore cicli di reset per statistiche e debugging.
      * Incrementato ogni volta che si resetta alreadyChosenVariables.
      */
     private int antiLoopResetCount;
@@ -116,7 +142,7 @@ public class CDCLSolver {
         this.proofGenerator = new ProofGenerator();
         this.proofGenerator.setVariableMapping(createInverseVariableMapping());
 
-        // NUOVO: Inizializzazione restart opzionale
+        // Inizializzazione restart opzionale
         if (enableRestart) {
             this.restartTechnique = new RestartTechnique();
             LOGGER.info("Restart technique ABILITATA");
@@ -128,9 +154,14 @@ public class CDCLSolver {
         // Reset contatori e stato
         this.conflictCount = 0;
         this.decisionCount = 0;
+        this.explanationCount = 0;
+        this.learnedClausesCount = 0;
         this.interrupted = false;
 
-        // NUOVO: Inizializzazione anti-loop VSIDS avanzato
+        // Inizializzazione lista statistiche per decisione
+        this.decisionStatisticsList = new ArrayList<>();            // ADDED
+
+        // Inizializzazione anti-loop VSIDS avanzato
         this.alreadyChosenVariables = new HashSet<>();
         this.antiLoopResetCount = 0;
 
@@ -187,7 +218,7 @@ public class CDCLSolver {
     }
 
     /**
-     * Crea mapping inverso per conversione ID numerico → nome variabile originale.
+     * Crea mapping inverso per conversione ID numerico -> nome variabile originale.
      */
     private Map<Integer, String> createInverseVariableMapping() {
         Map<Integer, String> inverseMapping = new HashMap<>();
@@ -259,7 +290,7 @@ public class CDCLSolver {
     public SATStatistics getPartialStatistics() {
         SATStatistics partialStats = new SATStatistics();
 
-        // CORRETTO: Copia contatori correnti senza modificare gli originali
+        // Copia contatori correnti senza modificare gli originali
         int currentDecisions = decisionCount;
         int currentConflicts = conflictCount;
         int currentRestarts = (restartTechnique != null) ? restartTechnique.getTotalRestarts() : 0;
@@ -298,7 +329,7 @@ public class CDCLSolver {
             // FASE INIZIALIZZAZIONE: Configura livello 0 con clausole unitarie
             initializeLevel0WithUnitClauses();
         } catch (ImmediateUNSATException e) {
-            // NUOVO: Gestione UNSAT immediato da clausole unitarie contraddittorie
+            // Gestione UNSAT immediato da clausole unitarie contraddittorie
             LOGGER.info("Formula UNSAT determinata durante inizializzazione: " + e.getMessage());
             return CDCLExecutionResult.unsatisfiable();
         }
@@ -361,11 +392,11 @@ public class CDCLSolver {
 
     //endregion
 
-    //region NUOVO: RISOLUZIONE CONFLITTO CON FLUSSO IBRIDO
+    //region RISOLUZIONE CONFLITTO CON FLUSSO IBRIDO
 
     /**
-     * NUOVO: Verifica se una nuova clausola da apprendere è consistente con quelle già apprese.
-     * CORRETTO: Per clausole unitarie, verifica specificatamente contro clausole unitarie del livello 0.
+     * Verifica se una nuova clausola da apprendere è consistente con quelle già apprese.
+     * Per clausole unitarie, verifica specificatamente contro clausole unitarie del livello 0.
      *
      * @param newClause clausola da verificare per consistenza
      * @return clausola in conflitto se inconsistente, null se consistente
@@ -374,7 +405,7 @@ public class CDCLSolver {
         LOGGER.fine("=== VERIFICA CONSISTENZA CLAUSOLA DA APPRENDERE ===");
         LOGGER.fine("Nuova clausola: " + newClause);
 
-        // CORRETTO: Per clausole unitarie, verifica contro clausole unitarie del livello 0
+        // Per clausole unitarie, verifica contro clausole unitarie del livello 0
         if (newClause.size() == 1) {
             return checkUnitClauseConsistencyWithLevel0(newClause);
         }
@@ -384,7 +415,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica consistenza di clausola unitaria contro assegnamenti unitari del livello 0.
+     * Verifica consistenza di clausola unitaria contro assegnamenti unitari del livello 0.
      *
      * @param unitClause clausola unitaria da verificare
      * @return clausola unitaria in conflitto se inconsistente, null se consistente
@@ -443,7 +474,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica consistenza di clausola non unitaria contro tutte le clausole.
+     * Verifica consistenza di clausola non unitaria contro tutte le clausole.
      *
      * @param nonUnitClause clausola non unitaria da verificare
      * @return clausola in conflitto se inconsistente, null se consistente
@@ -473,7 +504,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica se due clausole sono contradditorie (possono generare clausola vuota).
+     * Verifica se due clausole sono contradditorie (possono generare clausola vuota).
      *
      * @param clause1 prima clausola
      * @param clause2 seconda clausola
@@ -487,17 +518,17 @@ public class CDCLSolver {
         boolean contradictory = explanation.isEmpty();
 
         if (contradictory) {
-            LOGGER.finest("Clausole contradditorie rilevate: " + clause1 + " ∧ " + clause2 + " ⊢ []");
+            LOGGER.finest("Clausole contradditorie rilevate: " + clause1 + " & " + clause2 + " ⊢ []");
         }
 
         return contradictory;
     }
 
     /**
-     * CORRETTO: Risolve conflitto con flusso ibrido basato su lunghezza clausola.
+     * Risolve conflitto con flusso ibrido basato su lunghezza clausola.
      *
-     * - Clausola unitaria → Backtrack livello 0 + Learning diretto
-     * - Clausola non unitaria → Verifica propagazioni + Iterazioni
+     * - Clausola unitaria -> Backtrack livello 0 + Learning diretto
+     * - Clausola non unitaria -> Verifica propagazioni + Iterazioni
      */
     private ConflictAnalysisResult resolveConflict(List<Integer> conflictClause,
                                                    List<Integer> justifyingClause) {
@@ -508,6 +539,13 @@ public class CDCLSolver {
         // STEP 1: Aggiorna statistiche
         conflictCount++;
         statistics.incrementConflicts();
+
+        // Aggiorna statistiche per la decisione corrente
+        if (!decisionStatisticsList.isEmpty()) {        //ADDED
+            DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+            currentDecisionStats.conflicts++;
+        }
+
         updateVSIDSCountersAfterConflict(conflictClause);
 
         // STEP 2: Gestione restart se abilitato
@@ -523,10 +561,22 @@ public class CDCLSolver {
         // STEP 3: Genera spiegazione iniziale
         List<Integer> learnedClause = generateMathematicalExplanation(conflictClause, justifyingClause);
 
-        LOGGER.info("Spiegazione generata: " + conflictClause + " ∧ " + justifyingClause + " ⊢ " + learnedClause);
+        // Incrementa il contatore delle spiegazioni (non conflitti!)
+        explanationCount++;                         // ADDED
+        statistics.incrementExplanations();       // ADDED
+
+        // Aggiorna statistiche per la decisione corrente
+
+        if (!decisionStatisticsList.isEmpty()) {    // ADDED
+            DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+            currentDecisionStats.explanations++;
+        }
+
+
+        LOGGER.info("Spiegazione generata: " + conflictClause + " ~ " + justifyingClause + " => " + learnedClause);
         proofGenerator.recordResolutionStep(conflictClause, justifyingClause, learnedClause);
 
-        // STEP 4: Verifica clausola vuota → UNSAT
+        // STEP 4: Verifica clausola vuota -> UNSAT
         if (learnedClause.isEmpty()) {
             LOGGER.info("*** CLAUSOLA VUOTA DERIVATA - FORMULA UNSAT ***");
             return ConflictAnalysisResult.unsatisfiable();
@@ -534,19 +584,19 @@ public class CDCLSolver {
 
         // STEP 5: FLUSSO IBRIDO basato su lunghezza clausola
         if (learnedClause.size() == 1) {
-            // CASO A: CLAUSOLA UNITARIA → Comportamento semplificato
-            LOGGER.info("*** CLAUSOLA UNITARIA RILEVATA → FLUSSO SEMPLIFICATO ***");
+            // CASO A: CLAUSOLA UNITARIA -> Comportamento semplificato
+            LOGGER.info("*** CLAUSOLA UNITARIA RILEVATA -> FLUSSO SEMPLIFICATO ***");
             return handleUnitClauseLearning(learnedClause);
 
         } else {
-            // CASO B: CLAUSOLA NON UNITARIA → Comportamento con iterazioni
-            LOGGER.info("*** CLAUSOLA NON UNITARIA → FLUSSO CON VERIFICA PROPAGAZIONI ***");
+            // CASO B: CLAUSOLA NON UNITARIA -> Comportamento con iterazioni
+            LOGGER.info("*** CLAUSOLA NON UNITARIA -> FLUSSO CON VERIFICA PROPAGAZIONI ***");
             return handleNonUnitClauseLearning(learnedClause, conflictClause, justifyingClause);
         }
     }
 
     /**
-     * NUOVO: Gestisce learning di clausole unitarie (flusso semplificato).
+     * Gestisce learning di clausole unitarie (flusso semplificato).
      *
      * Per clausole unitarie:
      * 1. Backtrack al livello 0
@@ -572,6 +622,16 @@ public class CDCLSolver {
                 LOGGER.info("*** CLAUSOLA VUOTA DA INCONSISTENZA UNITARIA - FORMULA UNSAT ***");
                 return ConflictAnalysisResult.unsatisfiable();
             }
+
+            explanationCount++;                         // ADDED
+            statistics.incrementExplanations();         // ADDED
+
+            // Aggiorna statistiche per la decisione corrente
+
+            if (!decisionStatisticsList.isEmpty()) {    // ADDED
+                DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+                currentDecisionStats.explanations++;
+            }
         }
 
         // Backtrack al livello 0 per clausole unitarie
@@ -584,12 +644,12 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Gestisce learning di clausole non unitarie (flusso con iterazioni).
+     * Gestisce learning di clausole non unitarie (flusso con iterazioni).
      *
      * Per clausole non unitarie:
      * 1. Verifica consistenza con propagazioni correnti
-     * 2. Se inconsistente → iterazioni con nuove spiegazioni
-     * 3. Se consistente → verifica con clausole apprese e apprendi
+     * 2. Se inconsistente -> iterazioni con nuove spiegazioni
+     * 3. Se consistente -> verifica con clausole apprese e apprendi
      */
     private ConflictAnalysisResult handleNonUnitClauseLearning(List<Integer> initialLearnedClause,
                                                                List<Integer> initialConflictClause,
@@ -616,11 +676,18 @@ public class CDCLSolver {
 
                 if (conflictingLearnedClause != null) {
                     LOGGER.info("*** INCONSISTENZA NON UNITARIA CON CLAUSOLE APPRESE ***");
-                    LOGGER.info("Clausola: " + currentLearnedClause + " vs " + conflictingLearnedClause);
+                    LOGGER.info("Clausola: " + currentLearnedClause + " <> " + conflictingLearnedClause);
 
                     // Genera spiegazione finale
                     List<Integer> finalClause = generateMathematicalExplanation(
                             currentLearnedClause, conflictingLearnedClause);
+
+                    // Conta la spiegazione aggiuntiva
+                    explanationCount++;                             // ADDED
+                    statistics.incrementExplanations();             // ADDED
+                    if (!decisionStatisticsList.isEmpty()) {        // ADDED
+                        decisionStatisticsList.get(decisionStatisticsList.size() - 1).explanations++;
+                    }
 
                     proofGenerator.recordResolutionStep(currentLearnedClause, conflictingLearnedClause, finalClause);
 
@@ -636,7 +703,9 @@ public class CDCLSolver {
                 return ConflictAnalysisResult.backtrack(currentLearnedClause, backtrackLevel);
 
             } else {
-                // Clausola inconsistente → nuova iterazione
+
+
+                // Clausola inconsistente -> nuova iterazione
                 LOGGER.info("*** CLAUSOLA NON UNITARIA INCONSISTENTE CON PROPAGAZIONI ***");
                 LOGGER.info("Clausola: " + currentLearnedClause + " inconsistente con assegnazioni correnti");
 
@@ -651,8 +720,15 @@ public class CDCLSolver {
                 List<Integer> newLearnedClause = generateMathematicalExplanation(
                         currentLearnedClause, nextJustifyingClause);
 
-                LOGGER.info("Nuova spiegazione non unitaria: " + currentLearnedClause + " ∧ " +
-                        nextJustifyingClause + " ⊢ " + newLearnedClause);
+                // Conta la spiegazione aggiuntiva
+                explanationCount++;                                 // ADDED
+                statistics.incrementExplanations();                 // ADDED
+                if (!decisionStatisticsList.isEmpty()) {            // ADDED
+                    decisionStatisticsList.get(decisionStatisticsList.size() - 1).explanations++;
+                }
+
+                LOGGER.info("Nuova spiegazione non unitaria: " + currentLearnedClause + " ~ " +
+                        nextJustifyingClause + " => " + newLearnedClause);
 
                 proofGenerator.recordResolutionStep(currentLearnedClause, nextJustifyingClause, newLearnedClause);
 
@@ -672,12 +748,18 @@ public class CDCLSolver {
                     LOGGER.warning("Troppi loop iterativo non unitario - possibile ciclo infinito");
                     return ConflictAnalysisResult.unsatisfiable();
                 }
+
+                // Se la nuova clausa corrente da imparare è lunga 1,
+                // allora si passa la gestione
+                if(currentLearnedClause.size() == 1) {
+                    return handleUnitClauseLearning(currentLearnedClause);
+                }
             }
         }
     }
 
     /**
-     * NUOVO: Verifica se una clausola è consistente con le assegnazioni correnti.
+     * Verifica se una clausola è consistente con le assegnazioni correnti.
      *
      * Una clausola è inconsistente se tutte le sue letterali sono false sotto
      * le assegnazioni correnti (propagazioni e decisioni).
@@ -698,16 +780,16 @@ public class CDCLSolver {
             AssignedLiteral assignment = assignedValues.get(variable);
 
             if (assignment == null) {
-                // Variabile non assegnata → clausola può essere soddisfatta
+                // Variabile non assegnata -> clausola può essere soddisfatta
                 hasUnassignedLiteral = true;
-                LOGGER.finest("Variabile " + variable + " non assegnata → clausola può essere soddisfatta");
+                LOGGER.finest("Variabile " + variable + " non assegnata -> clausola può essere soddisfatta");
             } else {
                 boolean actualValue = assignment.getValue();
 
                 if (actualValue == expectedValue) {
-                    // Letterale vero → clausola soddisfatta
+                    // Letterale vero -> clausola soddisfatta
                     hasTrueLiteral = true;
-                    LOGGER.finest("Letterale " + literal + " vero → clausola soddisfatta");
+                    LOGGER.finest("Letterale " + literal + " vero -> clausola soddisfatta");
                     break;
                 } else {
                     LOGGER.finest("Letterale " + literal + " falso (variabile " + variable + " = " + actualValue + ")");
@@ -717,12 +799,12 @@ public class CDCLSolver {
 
         boolean consistent = hasTrueLiteral || hasUnassignedLiteral;
 
-        LOGGER.finest("Clausola " + clause + " → consistente: " + consistent);
+        LOGGER.finest("Clausola " + clause + " -> consistente: " + consistent);
         return consistent;
     }
 
     /**
-     * NUOVO: Trova la prossima clausola giustificante per l'iterazione di spiegazione.
+     * Trova la prossima clausola giustificante per l'iterazione di spiegazione.
      *
      * Cerca la clausola che ha giustificato una delle variabili presenti nella
      * clausola inconsistente, partendo dalle propagazioni più recenti.
@@ -783,15 +865,15 @@ public class CDCLSolver {
      */
     private int calculateSimpleBacktrackLevel(List<Integer> learnedClause) {
         if (learnedClause.size() == 1) {
-            // Clausola unitaria → backtrack al livello 0 per propagazione immediata
-            LOGGER.finest("Clausola unitaria → backtrack al livello 0");
+            // Clausola unitaria -> backtrack al livello 0 per propagazione immediata
+            LOGGER.finest("Clausola unitaria -> backtrack al livello 0");
             return 0;
         } else {
-            // Clausola multipla → backtrack di un livello per permettere assertion
+            // Clausola multipla -> backtrack di un livello per permettere assertion
             int currentLevel = decisionStack.getLevel();
             int targetLevel = Math.max(0, currentLevel - 1);
 
-            LOGGER.finest("Clausola multipla → backtrack: " + currentLevel + " → " + targetLevel);
+            LOGGER.finest("Clausola multipla -> backtrack: " + currentLevel + " -> " + targetLevel);
             return targetLevel;
         }
     }
@@ -833,7 +915,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Ottiene TUTTE le implicazioni in ordine cronologico da tutti i livelli.
+     * Ottiene TUTTE le implicazioni in ordine cronologico da tutti i livelli.
      * Non solo livello 0, ma tutti i livelli di decisione.
      */
     private List<AssignedLiteral> getAllImplicationsInChronologicalOrder() {
@@ -861,7 +943,7 @@ public class CDCLSolver {
 
     /**
      * Inizializza livello 0 con tutte le clausole unitarie originali della formula.
-     * CORRETTO: Rileva immediatamente UNSAT se clausole unitarie contradditorie.
+     * Rileva immediatamente UNSAT se clausole unitarie contradditorie.
      */
     private void initializeLevel0WithUnitClauses() {
         LOGGER.fine("=== INIZIALIZZAZIONE LIVELLO 0 CON CLAUSOLE UNITARIE ===");
@@ -869,7 +951,7 @@ public class CDCLSolver {
         List<List<Integer>> allClauses = formula.getClauses();
         int unitClausesAdded = 0;
 
-        // NUOVO: Tracking per rilevamento contradizioni immediate
+        // Tracking per rilevamento contradizioni immediate
         Map<Integer, Boolean> unitClauseValues = new HashMap<>();
         Map<Integer, List<Integer>> unitClauseSources = new HashMap<>();
 
@@ -879,7 +961,7 @@ public class CDCLSolver {
                 Integer variable = Math.abs(literal);
                 Boolean value = literal > 0;
 
-                // NUOVO: Verifica contraddizioni immediate tra clausole unitarie
+                // Verifica contraddizioni immediate tra clausole unitarie
                 if (unitClauseValues.containsKey(variable)) {
                     Boolean existingValue = unitClauseValues.get(variable);
                     if (!existingValue.equals(value)) {
@@ -898,7 +980,7 @@ public class CDCLSolver {
                         conflictCount = 1;
                         statistics.incrementConflicts();
 
-                        LOGGER.info("Prova UNSAT generata: " + clause1 + " ∧ " + clause2 + " ⊢ []");
+                        LOGGER.info("Prova UNSAT generata: " + clause1 + " & " + clause2 + " ⊢ []");
                         throw new ImmediateUNSATException("Clausole unitarie contraddittorie rilevate al livello 0");
                     }
                 }
@@ -913,7 +995,7 @@ public class CDCLSolver {
                     // Registra mapping per uso nelle spiegazioni
                     unitClauseMapping.put(literal, new ArrayList<>(clause));
 
-                    // NUOVO: Registra per controllo contraddizioni
+                    // Registra per controllo contraddizioni
                     unitClauseValues.put(variable, value);
                     unitClauseSources.put(variable, new ArrayList<>(clause));
 
@@ -925,13 +1007,23 @@ public class CDCLSolver {
                     validateUnitClauseConsistency(variable, value);
                 }
             }
+
+            // Incrementa il contatore delle propagazioni
+            statistics.incrementPropagations();       // ADDED
+
+            // Aggiorna statistiche per la decisione corrente
+
+            if (!decisionStatisticsList.isEmpty()) {    // ADDED
+                DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+                currentDecisionStats.propagations++;
+            }
         }
 
         LOGGER.info("Livello 0 inizializzato con " + unitClausesAdded + " clausole unitarie");
     }
 
     /**
-     * NUOVO: Eccezione per segnalare UNSAT immediato durante inizializzazione.
+     * Eccezione per segnalare UNSAT immediato durante inizializzazione.
      */
     private static class ImmediateUNSATException extends RuntimeException {
         public ImmediateUNSATException(String message) {
@@ -986,7 +1078,7 @@ public class CDCLSolver {
     //region CONFLICT ANALYSIS METODI ESISTENTI
 
     /**
-     * CORRETTO: Identifica l'ultima clausola giustificante che ha causato una propagazione
+     * Identifica l'ultima clausola giustificante che ha causato una propagazione
      * prima che si verificasse il conflitto.
      *
      * Algoritmo:
@@ -1035,7 +1127,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica se una variabile con il suo valore è coinvolta nel conflitto.
+     * Verifica se una variabile con il suo valore è coinvolta nel conflitto.
      *
      * Una variabile è coinvolta se:
      * - La variabile appare nella clausola conflitto
@@ -1085,10 +1177,10 @@ public class CDCLSolver {
         if (clause2 != null) {
             for (Integer literal : clause2) {
                 if (resultLiterals.contains(-literal)) {
-                    // Letterali complementari → rimuovi entrambi
+                    // Letterali complementari -> rimuovi entrambi
                     resultLiterals.remove(-literal);
                 } else {
-                    // Letterale non complementare → aggiungi
+                    // Letterale non complementare -> aggiungi
                     resultLiterals.add(literal);
                 }
             }
@@ -1138,6 +1230,17 @@ public class CDCLSolver {
         if (!learnedClause.isEmpty()) {
             applyAssertionIfUnit(learnedClause, backtrackLevel);
         }
+
+        // TODO: QUI INSERISCI IL CONTATORE DELLA CLASUOLA APPRESA
+        // Incrementa il contatore delle spiegazioni (non conflitti!)
+        learnedClausesCount++;                      // ADDED
+        statistics.incrementLearnedClauses();       // ADDED
+
+        // Aggiorna statistiche per la decisione corrente
+        if (!decisionStatisticsList.isEmpty()) {    // ADDED
+            DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+            currentDecisionStats.learnedClauses++;
+        }
     }
 
     /**
@@ -1150,7 +1253,16 @@ public class CDCLSolver {
 
         if (!isClauseDuplicate(learnedClause)) {
             learnedClauses.add(new ArrayList<>(learnedClause));
-            statistics.incrementLearnedClauses();
+            //statistics.incrementLearnedClauses();
+
+            // Aggiorna le statistiche per la decisione corrente
+            /*
+            if (!decisionStatisticsList.isEmpty()) {
+                DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+                currentDecisionStats.learnedClauses++;
+            }
+             */
+
             LOGGER.fine("Clausola appresa: " + learnedClause);
         } else {
             LOGGER.finest("Clausola duplicata non appresa: " + learnedClause);
@@ -1202,7 +1314,7 @@ public class CDCLSolver {
             return;
         }
 
-        LOGGER.fine("Esecuzione backtrack: " + currentLevel + " → " + targetLevel);
+        LOGGER.fine("Esecuzione backtrack: " + currentLevel + " -> " + targetLevel);
 
         // Rimuovi livelli sequenzialmente
         while (decisionStack.getLevel() > targetLevel) {
@@ -1242,7 +1354,7 @@ public class CDCLSolver {
     //region RESTART E ANTI-LOOP
 
     /**
-     * NUOVO: Reset del tracking anti-loop dopo restart.
+     * Reset del tracking anti-loop dopo restart.
      * Il restart resetta completamente la ricerca quindi è sicuro ripartire da capo.
      */
     private void resetAntiLoopTracking() {
@@ -1380,7 +1492,7 @@ public class CDCLSolver {
                 }
 
                 if (literalValue) {
-                    // Letterale vero → clausola automaticamente soddisfatta
+                    // Letterale vero -> clausola automaticamente soddisfatta
                     return ClauseEvaluationResult.satisfied();
                 }
                 // Se letterale falso, continua a controllare gli altri
@@ -1414,6 +1526,12 @@ public class CDCLSolver {
         decisionStack.addImpliedLiteral(variable, value, clause);
         statistics.incrementPropagations();
 
+        // Aggiorna statistiche per la decisione corrente
+        if (!decisionStatisticsList.isEmpty()) {
+            DecisionStatistics currentDecisionStats = decisionStatisticsList.get(decisionStatisticsList.size() - 1);
+            currentDecisionStats.propagations++;
+        }
+
         LOGGER.fine("*** PROPAGAZIONE UNITARIA ***");
         LOGGER.fine("Variabile: " + variable + " = " + value);
         LOGGER.fine("Giustificata da: " + clause);
@@ -1427,7 +1545,7 @@ public class CDCLSolver {
     //region DECISION MAKING E EURISTICA VSIDS CON ANTI-LOOP AVANZATO
 
     /**
-     * NUOVO: Esegue decision making con euristica VSIDS avanzata e anti-loop completo.
+     * Esegue decision making con euristica VSIDS avanzata e anti-loop completo.
      *
      * ALGORITMO ANTI-LOOP AVANZATO:
      * 1. Cerca variabili non ancora mai scelte (non in alreadyChosenVariables)
@@ -1449,7 +1567,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Trova migliore variabile applicando strategia anti-loop avanzata.
+     * Trova migliore variabile applicando strategia anti-loop avanzata.
      */
     private VariableSelection findBestVariableWithAntiLoop() {
         // FASE 1: Cerca variabili mai scelte prima
@@ -1476,7 +1594,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Trova prima variabile non ancora mai tentata.
+     * Trova prima variabile non ancora mai tentata.
      */
     private VariableSelection findUntriedVariable() {
         for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
@@ -1501,7 +1619,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Ottiene lista di tutte le variabili non assegnate.
+     * Ottiene lista di tutte le variabili non assegnate.
      */
     private List<Integer> getUnassignedVariables() {
         List<Integer> unassigned = new ArrayList<>();
@@ -1516,7 +1634,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Esegue reset del tracking anti-loop.
+     * Esegue reset del tracking anti-loop.
      */
     private void performAntiLoopReset() {
         int previouslyBlocked = alreadyChosenVariables.size();
@@ -1527,7 +1645,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Trova prima variabile non assegnata dopo reset.
+     * Trova prima variabile non assegnata dopo reset.
      */
     private VariableSelection findFirstUnassignedVariableAfterReset() {
         for (Map.Entry<Integer, AssignedLiteral> entry : assignedValues.entrySet()) {
@@ -1543,7 +1661,7 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Aggiorna tracking anti-loop dopo decisione.
+     * Aggiorna tracking anti-loop dopo decisione.
      */
     private void updateAntiLoopTracking(Integer chosenVariable) {
         alreadyChosenVariables.add(chosenVariable);
@@ -1561,7 +1679,7 @@ public class CDCLSolver {
         boolean choosePositive = positiveCount >= negativeCount;
 
         LOGGER.finest("Selezione polarità per " + variable + ": positiva=" + positiveCount +
-                ", negativa=" + negativeCount + " → scelta=" + choosePositive);
+                ", negativa=" + negativeCount + " -> scelta=" + choosePositive);
 
         return choosePositive;
     }
@@ -1572,6 +1690,10 @@ public class CDCLSolver {
     private void recordDecision(Integer variable, Boolean value) {
         decisionCount++;
         statistics.incrementDecisions();
+
+        // Crea nuove statistiche per questa decisione
+        DecisionStatistics newDecisionStats = new DecisionStatistics(decisionCount);
+        decisionStatisticsList.add(newDecisionStats);
 
         // Crea assegnamento decisionale
         AssignedLiteral decision = new AssignedLiteral(variable, value, true, null);
@@ -1689,7 +1811,7 @@ public class CDCLSolver {
     private SATResult generateFinalResult(CDCLExecutionResult executionResult) {
         statistics.stopTimer();
 
-        // CORRETTO: Sincronizza tutte le statistiche finali prima del logging
+        // Sincronizza tutte le statistiche finali prima del logging
         synchronizeFinalStatistics();
 
         // Log statistiche finali
@@ -1720,53 +1842,11 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Sincronizza tutte le statistiche finali da diverse fonti.
+     * Sincronizza tutte le statistiche finali da diverse fonti.
      * Garantisce coerenza tra CDCLSolver e RestartTechnique per output finale.
-     * CORRETTO: Il numero di conflitti deve coincidere con la dimensione della prova.
+     * Il numero di conflitti deve coincidere con la dimensione della prova.
      */
     private void synchronizeFinalStatistics() {
-        // CRITICO: Il numero di conflitti = dimensione della prova (numero passi risoluzione)
-        int proofSize = proofGenerator.getStepCount();
-
-        if (proofSize > 0) {
-            // Per formule UNSAT: conflitti = passi di prova
-            conflictCount = proofSize;
-
-            // Sincronizza statistics.conflicts con il valore corretto
-            while (statistics.getConflicts() < conflictCount) {
-                statistics.incrementConflicts();
-            }
-            // Se statistics.conflicts è maggiore, resettalo al valore corretto
-            if (statistics.getConflicts() > conflictCount) {
-                // Crea nuove statistiche con il valore corretto
-                SATStatistics correctedStats = new SATStatistics();
-                for (int i = 0; i < conflictCount; i++) {
-                    correctedStats.incrementConflicts();
-                }
-                for (int i = 0; i < decisionCount; i++) {
-                    correctedStats.incrementDecisions();
-                }
-                if (restartTechnique != null) {
-                    for (int i = 0; i < restartTechnique.getTotalRestarts(); i++) {
-                        correctedStats.incrementRestarts();
-                    }
-                }
-                correctedStats.setProofSize(proofSize);
-                this.statistics = correctedStats;
-            }
-        } else {
-            // Per formule SAT: usa il conteggio normale dei conflitti
-            while (statistics.getConflicts() < conflictCount) {
-                statistics.incrementConflicts();
-            }
-        }
-
-        // Verifica e corregge il conteggio decisioni
-        int actualDecisions = decisionCount;
-        while (statistics.getDecisions() < actualDecisions) {
-            statistics.incrementDecisions();
-        }
-
         // Sincronizza conteggio restart da RestartTechnique
         if (restartTechnique != null) {
             int actualRestarts = restartTechnique.getTotalRestarts();
@@ -1775,11 +1855,21 @@ public class CDCLSolver {
             }
         }
 
-        // Imposta dimensione prova
-        statistics.setProofSize(proofSize);
+        // Trasferisci statistiche per decisione
+        for (DecisionStatistics decStats : decisionStatisticsList) {
+            statistics.addDecisionBreakdown(
+                    decStats.decisionNumber,
+                    decStats.propagations,
+                    decStats.conflicts,
+                    decStats.explanations,
+                    decStats.learnedClauses
+            );
+        }
 
         LOGGER.fine("Statistiche sincronizzate: Decisioni=" + statistics.getDecisions() +
                 ", Conflitti=" + statistics.getConflicts() +
+                ", Spiegazioni=" + statistics.getExplanations() +
+                ", Propagazioni=" + statistics.getPropagations() +
                 ", Restart=" + statistics.getRestarts() +
                 ", ProofSize=" + statistics.getProofSize());
     }
@@ -1801,7 +1891,7 @@ public class CDCLSolver {
                 model.put(originalVariableName, assignment.getValue());
                 LOGGER.finest("Modello: " + originalVariableName + " = " + assignment.getValue());
             } else {
-                // Variabile non assegnata → valore di default
+                // Variabile non assegnata -> valore di default
                 model.put(originalVariableName, false);
                 LOGGER.finest("Modello: " + originalVariableName + " = false (default)");
             }
@@ -1819,7 +1909,7 @@ public class CDCLSolver {
         LOGGER.info("Decisioni totali: " + decisionCount);
         LOGGER.info("Conflitti rilevati: " + conflictCount);
 
-        // CORRETTO: Log statistiche restart ottenute direttamente da RestartTechnique
+        // Log statistiche restart ottenute direttamente da RestartTechnique
         if (restartTechnique != null) {
             int totalRestarts = restartTechnique.getTotalRestarts();
             int totalSubsumptionRemovals = restartTechnique.getTotalSubsumptionRemovals();
@@ -1854,7 +1944,7 @@ public class CDCLSolver {
             LOGGER.info("Efficacia learning: " + String.format("%.2f", learningRate) + " clausole/conflitto");
         }
 
-        // CORRETTO: Statistiche restart basate sui valori corretti
+        // Statistiche restart basate sui valori corretti
         if (restartTechnique != null && restartTechnique.getTotalRestarts() > 0) {
             double restartRate = (double) conflictCount / restartTechnique.getTotalRestarts();
             LOGGER.info("Frequenza restart: " + String.format("%.1f", restartRate) + " conflitti/restart");
@@ -1863,7 +1953,7 @@ public class CDCLSolver {
             LOGGER.info("Efficacia sussunzione: " + String.format("%.1f", subsumptionRate) + " rimozioni/restart");
         }
 
-        // NUOVO: Statistiche anti-loop avanzato
+        // Statistiche anti-loop avanzato
         LOGGER.info("Anti-loop avanzato: " + alreadyChosenVariables.size() + " variabili bloccate");
         if (antiLoopResetCount > 0) {
             LOGGER.info("Reset anti-loop eseguiti: " + antiLoopResetCount);
@@ -1875,7 +1965,7 @@ public class CDCLSolver {
     //region INTERFACCIA PUBBLICA RESTART E ANTI-LOOP
 
     /**
-     * NUOVO: Restituisce statistiche restart se abilitato.
+     * Restituisce statistiche restart se abilitato.
      */
     public String getRestartStatistics() {
         if (restartTechnique != null) {
@@ -1886,14 +1976,14 @@ public class CDCLSolver {
     }
 
     /**
-     * NUOVO: Verifica se restart è abilitato.
+     * Verifica se restart è abilitato.
      */
     public boolean isRestartEnabled() {
         return restartTechnique != null;
     }
 
     /**
-     * NUOVO: Restituisce informazioni anti-loop avanzato per debugging.
+     * Restituisce informazioni anti-loop avanzato per debugging.
      */
     public String getAntiLoopInfo() {
         StringBuilder info = new StringBuilder();
@@ -1930,7 +2020,7 @@ public class CDCLSolver {
     //region CLASSI DI SUPPORTO
 
     /**
-     * NUOVO: Classe di supporto per selezione variabile con polarità.
+     * Classe di supporto per selezione variabile con polarità.
      */
     private static class VariableSelection {
         final Integer variable;

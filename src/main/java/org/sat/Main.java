@@ -7,6 +7,7 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import org.sat.antlr.org.sat.parser.LogicFormulaLexer;
 import org.sat.cdcl.CDCLSolver;
 import org.sat.cdcl.SATResult;
+import org.sat.cdcl.SATStatistics;
 import org.sat.cnf.CNFConverter;
 import org.sat.cnf.LogicFormulaParser;
 import org.sat.optionalfeatures.SubsumptionPrinciple;
@@ -911,21 +912,35 @@ public final class Main {
         // Estrae tutte le metriche raccolte durante CDCL
         var stats = satResult.getStatistics();
 
-        // Per formule soddisfacibili, decisioni e propagazioni mostrano il processo di ricerca
-        if (satResult.isSatisfiable()) {
-            // Decisioni con euristiche VSIDS
-            writer.write("Decisioni: " + stats.getDecisions() + "\n");
-            // Propagazioni unitarie
-            writer.write("Propagazioni: " + stats.getPropagations() + "\n");
+        // Calcola le statistiche totali senza considerare quelle dovute alle
+        // clausole unitarie assunte vere prima della prima decisione
+        int totalPropagations = 0;
+        int totalConflicts = 0;
+        int totalExplanations = 0;
+        int totalLearnedClauses = 0;
+
+        if (stats.hasDecisionBreakdown()) {
+            List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
+
+            // Somma tutte le statistiche per decisione
+            for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
+                totalPropagations += breakdown.propagations;
+                totalConflicts += breakdown.conflicts;
+                totalExplanations += breakdown.explanations;
+                totalLearnedClauses += breakdown.learnedClauses;
+            }
         }
 
-        // Conflitti analizzati
-        writer.write("Conflitti: " + stats.getConflicts() + "\n");
-        // Clausole apprese
-        writer.write("Clausole apprese: " + stats.getLearnedClauses() + "\n");
+        // STATISTICHE TOTALI
+        writer.write("\n=== STATISTICHE TOTALI ===\n");
+        writer.write("Decisioni totali: " + stats.getDecisions() + "\n");
+        writer.write("Propagazioni totali: " + stats.getPropagations() + "\n");
+        writer.write("Conflitti totali: " + stats.getConflicts() + "\n");
+        writer.write("Spiegazioni totali: " + stats.getExplanations() + "\n");
+        writer.write("Clausole apprese totali: " + stats.getLearnedClauses() + "\n");
 
         // Reinizio (opzionale)
-        if (stats.getRestarts() > 0) {
+        if (stats.getRestarts() >= 0) {
             // Restart eseguiti
             writer.write("Restart: " + stats.getRestarts() + "\n");
         }
@@ -933,6 +948,31 @@ public final class Main {
         // TODO: considerare solo la risoluzione CDCL???
         // Include parsing, conversione CNF, risoluzione CDCL, generazione output
         writer.write("Tempo impiegato: " + stats.getExecutionTimeMs() + " ms\n");
+
+        // Si riportano le statistiche specifiche per ogni decisione
+        if (stats.hasDecisionBreakdown() || true) {
+            writer.write("\n=== STATISTICHE PER DECISIONE ===\n");
+
+            writer.write(String.format("- PRE #1-decisione: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                    stats.getPropagations() - totalPropagations,
+                    stats.getConflicts() - totalConflicts,
+                    stats.getExplanations() - totalExplanations,
+                    stats.getLearnedClauses() - totalLearnedClauses));
+
+            List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
+
+            for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
+                writer.write(String.format("- Decisione #%d: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                        breakdown.decisionNumber,
+                        breakdown.propagations,
+                        breakdown.conflicts,
+                        breakdown.explanations,
+                        breakdown.learnedClauses));
+            }
+        } else {
+            writer.write("\n=== STATISTICHE PER DECISIONE ===\n");
+            writer.write("Non è servito fare nemmeno una decisione.");
+        }
     }
 
     /**

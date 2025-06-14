@@ -1,5 +1,8 @@
 package org.sat.cdcl;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * STATISTICHE SAT - Sistema completo di raccolta e analisi metriche di esecuzione
  *
@@ -47,6 +50,17 @@ public class SATStatistics {
      * Indica l'utilizzo della tecnica di restart per prevenzione stalli.
      */
     private int restarts = 0;
+
+    /**
+     * Numero di spiegazioni generate (diverse dai conflitti).
+     * Una spiegazione è generata quando si risolve tra due clausole.
+     */
+    private int explanations = 0;
+
+    /**
+     * Statistiche dettagliate per ogni decisione.
+     */
+    private final List<DecisionBreakdown> decisionBreakdowns = new ArrayList<>();
 
     //endregion
 
@@ -143,6 +157,57 @@ public class SATStatistics {
      */
     public synchronized void incrementRestarts() {
         restarts++;
+    }
+
+    /**
+     * Classe per statistiche di una singola decisione.
+     */
+    public static class DecisionBreakdown {
+        public final int decisionNumber;
+        public final int propagations;
+        public final int conflicts;
+        public final int explanations;
+        public final int learnedClauses;
+
+        public DecisionBreakdown(int decisionNumber, int propagations, int conflicts,
+                                 int explanations, int learnedClauses) {
+            this.decisionNumber = decisionNumber;
+            this.propagations = propagations;
+            this.conflicts = conflicts;
+            this.explanations = explanations;
+            this.learnedClauses = learnedClauses;
+        }
+    }
+
+    /**
+     * Incrementa contatore spiegazioni generate.
+     */
+    public synchronized void incrementExplanations() {
+        explanations++;
+    }
+
+    /**
+     * Aggiunge statistiche per una decisione.
+     */
+    public synchronized void addDecisionBreakdown(int decisionNumber, int propagations,
+                                                  int conflicts, int explanations, int learnedClauses) {
+        decisionBreakdowns.add(new DecisionBreakdown(decisionNumber, propagations,
+                conflicts, explanations, learnedClauses));
+    }
+
+    /** @return numero di spiegazioni generate */
+    public int getExplanations() {
+        return explanations;
+    }
+
+    /** @return true se ci sono statistiche per decisione */
+    public boolean hasDecisionBreakdown() {
+        return !decisionBreakdowns.isEmpty();
+    }
+
+    /** @return lista statistiche per decisione */
+    public List<DecisionBreakdown> getDecisionBreakdowns() {
+        return new ArrayList<>(decisionBreakdowns);
     }
 
     //endregion

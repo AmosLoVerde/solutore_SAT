@@ -5,6 +5,17 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.6] - 2025-06-14
+### Fixed
+- Corretta la logica di conteggio e tracciamento delle statistiche durante
+  l’esecuzione del solutore SAT.
+- I file `.stats` ora riportano informazioni più precise e affidabili.
+
+### Note
+- È consigliata una futura attività di refactoring per migliorare la pulizia del codice relativo alle statistiche.
+
+
+
 ## [1.8.5] - 2025-06-14
 ### Refactored
 - Migliorata la leggibilità e aggiornati i commenti nel file `.java`.
