@@ -1,5 +1,8 @@
 package org.sat.cdcl;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * STATISTICHE SAT - Sistema completo di raccolta e analisi metriche di esecuzione
  *
@@ -7,21 +10,6 @@ package org.sat.cdcl;
  * includendo il supporto completo per la tecnica restart e metriche di performance
  * avanzate per analisi algoritmica approfondita.
  *
- * METRICHE PRINCIPALI TRACCIATE:
- * • Decisioni: Scelte euristiche durante la ricerca
- * • Conflitti: Conflitti rilevati e analizzati
- * • Propagazioni: Implicazioni derivate automaticamente
- * • Clausole apprese: Learning dinamico dalla conflict analysis
- * • Backjumps: Operazioni di backtracking non-cronologico
- * • Restart: Operazioni di reinizio per prevenzione stalli
- * • Prove: Dimensioni e complessità prove generate
- * • Timing: Misurazione accurata tempi di esecuzione
- *
- * NUOVE FUNZIONALITÀ RESTART:
- * • Tracking restart eseguiti con soglia configurabile
- * • Analisi efficacia restart tramite ratios specifici
- * • Integrazione con statistiche sussunzione post-restart
- * • Monitoring pattern di utilizzo restart per tuning
  */
 public class SATStatistics {
 
@@ -62,6 +50,17 @@ public class SATStatistics {
      * Indica l'utilizzo della tecnica di restart per prevenzione stalli.
      */
     private int restarts = 0;
+
+    /**
+     * Numero di spiegazioni generate (diverse dai conflitti).
+     * Una spiegazione è generata quando si risolve tra due clausole.
+     */
+    private int explanations = 0;
+
+    /**
+     * Statistiche dettagliate per ogni decisione.
+     */
+    private final List<DecisionBreakdown> decisionBreakdowns = new ArrayList<>();
 
     //endregion
 
@@ -104,8 +103,18 @@ public class SATStatistics {
      * Avvia immediatamente la misurazione del tempo di esecuzione.
      */
     public SATStatistics() {
-        this.startTime = System.currentTimeMillis();
+        //this.startTime = System.currentTimeMillis();
+        this.startTime = 0;
         this.timerStopped = false;
+    }
+
+    /**
+     * Metodo per l'avvio esplicito timer CDCL
+     */
+    public void startCDCLTimer() {
+        if (startTime == 0 && !timerStopped) {
+            this.startTime = System.currentTimeMillis();
+        }
     }
 
     //endregion
@@ -160,6 +169,57 @@ public class SATStatistics {
         restarts++;
     }
 
+    /**
+     * Classe per statistiche di una singola decisione.
+     */
+    public static class DecisionBreakdown {
+        public final int decisionNumber;
+        public final int propagations;
+        public final int conflicts;
+        public final int explanations;
+        public final int learnedClauses;
+
+        public DecisionBreakdown(int decisionNumber, int propagations, int conflicts,
+                                 int explanations, int learnedClauses) {
+            this.decisionNumber = decisionNumber;
+            this.propagations = propagations;
+            this.conflicts = conflicts;
+            this.explanations = explanations;
+            this.learnedClauses = learnedClauses;
+        }
+    }
+
+    /**
+     * Incrementa contatore spiegazioni generate.
+     */
+    public synchronized void incrementExplanations() {
+        explanations++;
+    }
+
+    /**
+     * Aggiunge statistiche per una decisione.
+     */
+    public synchronized void addDecisionBreakdown(int decisionNumber, int propagations,
+                                                  int conflicts, int explanations, int learnedClauses) {
+        decisionBreakdowns.add(new DecisionBreakdown(decisionNumber, propagations,
+                conflicts, explanations, learnedClauses));
+    }
+
+    /** @return numero di spiegazioni generate */
+    public int getExplanations() {
+        return explanations;
+    }
+
+    /** @return true se ci sono statistiche per decisione */
+    public boolean hasDecisionBreakdown() {
+        return !decisionBreakdowns.isEmpty();
+    }
+
+    /** @return lista statistiche per decisione */
+    public List<DecisionBreakdown> getDecisionBreakdowns() {
+        return new ArrayList<>(decisionBreakdowns);
+    }
+
     //endregion
 
     //region GESTIONE METRICHE SPECIALI
@@ -200,11 +260,17 @@ public class SATStatistics {
      * @return tempo di esecuzione in ms (corrente o finale)
      */
     public long getExecutionTimeMs() {
+        if (startTime == 0) {
+            return 0; // Timer mai avviato
+        }
+
         if (!timerStopped && startTime > 0) {
             // Timer ancora attivo: calcola tempo parziale
             return System.currentTimeMillis() - startTime;
         }
+
         return executionTimeMs;
+
     }
 
     /**
@@ -501,143 +567,6 @@ public class SATStatistics {
         report.append("\n===================================\n");
 
         return report.toString();
-    }
-
-    //endregion
-
-    //region UTILITÀ E VALIDAZIONE
-
-    /**
-     * Verifica se le statistiche contengono dati significativi.
-     * Utile per determinare se una risoluzione ha effettivamente lavorato.
-     *
-     * @return true se almeno una metrica core è stata registrata
-     */
-    public boolean hasSignificantData() {
-        return decisions > 0 || conflicts > 0 || propagations > 0 || restarts > 0 || getExecutionTimeMs() > 0;
-    }
-
-    /**
-     * Verifica integrità delle statistiche raccolte.
-     * Controlla consistenza logica tra metriche correlate.
-     *
-     * @return true se statistiche sono logicamente consistenti
-     */
-    public boolean isConsistent() {
-        // Verifiche di consistenza logica
-        if (conflicts > decisions && decisions > 0) {
-            return false; // Non può avere più conflitti che decisioni in scenari normali
-        }
-
-        if (learnedClauses > conflicts && conflicts > 0) {
-            return false; // Non può imparare più clausole che conflitti avuti
-        }
-
-        if (restarts > 0 && conflicts == 0) {
-            return false; // Non può avere restart senza conflitti
-        }
-
-        // Verifica soglia restart (assumendo soglia 5)
-        if (restarts > 0 && conflicts < restarts * 3) {
-            return false; // Troppi restart per i conflitti rilevati
-        }
-
-        if (executionTimeMs < 0) {
-            return false; // Tempo negativo impossibile
-        }
-
-        return true;
-    }
-
-    /**
-     * Reset completo di tutte le statistiche.
-     * Utile per riutilizzo della stessa istanza su problemi diversi.
-     */
-    public void reset() {
-        decisions = 0;
-        propagations = 0;
-        conflicts = 0;
-        learnedClauses = 0;
-        backjumps = 0;
-        restarts = 0;
-        proofSize = 0;
-        executionTimeMs = 0;
-        startTime = System.currentTimeMillis();
-        timerStopped = false;
-    }
-
-    /**
-     * Copia le statistiche da un'altra istanza.
-     * Utile per aggregazione o backup di statistiche.
-     *
-     * @param other istanza da cui copiare le statistiche
-     * @throws IllegalArgumentException se other è null
-     */
-    public void copyFrom(SATStatistics other) {
-        if (other == null) {
-            throw new IllegalArgumentException("Istanza di copia non può essere null");
-        }
-
-        this.decisions = other.decisions;
-        this.propagations = other.propagations;
-        this.conflicts = other.conflicts;
-        this.learnedClauses = other.learnedClauses;
-        this.backjumps = other.backjumps;
-        this.restarts = other.restarts;
-        this.proofSize = other.proofSize;
-        this.executionTimeMs = other.executionTimeMs;
-        this.timerStopped = other.timerStopped;
-        // Non copiamo startTime per preservare timing della istanza corrente
-    }
-
-    /**
-     * Verifica se restart sono stati utilizzati.
-     *
-     * @return true se almeno un restart è stato eseguito
-     */
-    public boolean hasRestartActivity() {
-        return restarts > 0;
-    }
-
-    /**
-     * Calcola efficienza complessiva solver considerando tutte le metriche.
-     * Metrica composita per valutazione performance generale.
-     *
-     * @return indice efficienza 0.0-1.0 (1.0 = ottimale)
-     */
-    public double getOverallEfficiency() {
-        if (!hasSignificantData()) return 0.0;
-
-        double efficiency = 0.0;
-        int factorCount = 0;
-
-        // Fattore propagazione
-        if (decisions > 0) {
-            efficiency += Math.min(getPropagationEfficiency() / 10.0, 1.0);
-            factorCount++;
-        }
-
-        // Fattore learning
-        if (conflicts > 0) {
-            efficiency += Math.min(getLearningEfficiency(), 1.0);
-            factorCount++;
-        }
-
-        // Fattore restart (bonus se utilizzati appropriatamente)
-        if (restarts > 0 && conflicts > 15) {
-            double restartBonus = Math.min(getRestartUtilizationRate() / 100.0, 0.2);
-            efficiency += restartBonus;
-            factorCount++;
-        }
-
-        // Fattore temporale
-        if (getExecutionTimeMs() > 0 && decisions > 0) {
-            double timeEfficiency = Math.min(getDecisionsPerSecond() / 1000.0, 1.0);
-            efficiency += timeEfficiency;
-            factorCount++;
-        }
-
-        return factorCount > 0 ? efficiency / factorCount : 0.0;
     }
 
     //endregion

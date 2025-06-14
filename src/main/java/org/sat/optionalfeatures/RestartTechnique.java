@@ -8,38 +8,9 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * TECNICA DEL RESTART - Implementazione completa per prevenzione stalli in ricerca SAT
- *
- * Implementa la strategia di restart periodico per evitare stalli durante la ricerca SAT,
- * applicando reinizio ogni N conflitti con preservazione dell'apprendimento e applicazione
+ * Implementa la strategia del reinizio periodico per evitare stalli durante la ricerca SAT,
+ * applicando reinizio ogni N=5 conflitti con preservazione dell'apprendimento e applicazione
  * automatica della sussunzione per ottimizzazione post-restart.
- *
- * TEORIA E MOTIVAZIONI:
- * • Previene stalli in aree non promettenti dello spazio di ricerca
- * • Mantiene knowledge acquisition tramite clausole apprese
- * • Combina restart con sussunzione per duplice ottimizzazione
- * • Bilancia exploration vs exploitation nella ricerca
- *
- * ALGORITMO RESTART IMPLEMENTATO:
- * • Contatore conflitti con soglia configurabile (default: 5)
- * • Trigger automatico ogni N conflitti durante conflict analysis
- * • Preservazione completa: clausole apprese + assegnamenti livello 0
- * • Eliminazione decisionale: tutte le decisioni e propagazioni livelli > 0
- * • Sussunzione post-restart per rimozione clausole ridondanti
- * • Ripresa algoritmo normale da stato pulito livello 0
- *
- * BENEFICI PERFORMANCE:
- * • Riduzione probability di rimanere bloccati in subtree infruttuosi
- * • Migliore diversificazione della ricerca
- * • Sinergia restart + sussunzione per formula più compatta
- * • Mantenimento progressive learning tramite clausole
- *
- * INTEGRAZIONE CDCL:
- * • Trigger nel conflict analysis prima del backtracking
- * • Coordinamento con decision stack per gestione livelli
- * • Interfaccia pulita per disaccoppiamento da core solver
- * • Statistiche dettagliate per monitoraggio efficacia
- *
  */
 public class RestartTechnique {
 

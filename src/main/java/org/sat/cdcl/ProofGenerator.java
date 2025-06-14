@@ -5,28 +5,20 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
- * GENERATORE PROVE MATEMATICHE - Sistema completo per generazione prove di insoddisfacibilità
+ * GENERATORE PROVE MATEMATICHE - Sistema per costruzione prove di insoddisfacibilità
  *
- * Implementa la generazione automatica di prove matematicamente corrette per formule UNSAT
- * tramite sequenze di spiegazioni successive, seguendo rigorosamente i principi della
- * logica proposizionale e del calcolo risolutivo.
+ * Implementa la generazione automatica di prove matematiche per formule UNSAT seguendo
+ * il metodo delle spiegazioni sequenziali. Ogni passo deriva una nuova clausola da due
+ * clausole esistenti fino alla derivazione della clausola vuota [].
  *
- * METODOLOGIA DELLE SPIEGAZIONI SEQUENZIALI:
- * • Ogni passo di spiegazione deriva una nuova clausola da due clausole esistenti
- * • Il processo continua fino alla derivazione della clausola vuota []
- * • Ogni derivazione è matematicamente giustificata e verificabile
- * • La prova finale è una sequenza completa e autocontenuta
+ * METODOLOGIA:
+ * - Ogni spiegazione: clausola_A + clausola_B -> clausola_spiegazione
+ * - Sequenza ordinata di spiegazioni matematicamente giustificate
+ * - Terminazione con clausola vuota [] per conferma UNSAT
  *
- * CARATTERISTICHE INNOVATIVE:
- * • Gestione corretta spiegazioni per conflitti livello 0 (clausole unitarie)
- * • Supporto spiegazioni sequenziali per casi complessi
- * • Output human-readable con nomi variabili originali
- * • Validazione automatica completezza e correttezza prove
- * • Logging dettagliato per debugging e audit
- *
- * FORMATO OUTPUT STANDARD:
- * (clausola1) e (clausola2) genera clausola_risultato
- * (clausola3) e (clausola4) genera clausola_risultato2
+ * FORMATO OUTPUT:
+ * (clausola1) e (clausola2) genera clausola_spiegazione1
+ * (clausola3) e (clausola4) genera clausola_spiegazione2
  * ...
  * (clausolaN) e (clausolaM) genera []
  *
@@ -35,51 +27,49 @@ public class ProofGenerator {
 
     private static final Logger LOGGER = Logger.getLogger(ProofGenerator.class.getName());
 
-    //region STRUTTURE DATI CORE PER TRACKING PROVE
+    //region STRUTTURE DATI CORE
 
     /**
-     * Sequenza ordinata di spiegazioni registrate durante l'esecuzione CDCL.
-     * Ogni spiegazione rappresenta un passo logico: clausola_A + clausola_B → clausola_C
-     * Invariante: lista immutabile dopo registrazione, ordine cronologico preservato
+     * Sequenza cronologica di spiegazioni matematiche registrate durante CDCL.
+     * Ogni elemento rappresenta un passo: clausola_A + clausola_B → clausola_C
      */
     private final List<ExplanationStep> explanationSequence;
 
     /**
-     * Mapping bidirezionale da ID numerico a nome variabile originale.
-     * Utilizzato per generazione output human-readable e debugging.
-     * Invariante: mapping completo e consistente, no duplicati
+     * Mapping da ID numerico a nome variabile originale per output leggibile.
+     * Essenziale per convertire prove numeriche in formato comprensibile.
      */
     private Map<Integer, String> variableMapping;
 
     /**
-     * Flag che indica se la clausola vuota è stata derivata con successo.
+     * Indica se la clausola vuota [] è stata derivata con successo.
      * Determina la completezza della prova di insoddisfacibilità.
      */
     private boolean emptyClauseDerivated;
 
     //endregion
 
-    //region INIZIALIZZAZIONE E CONFIGURAZIONE
+    //region INIZIALIZZAZIONE
 
     /**
-     * Inizializza generatore prove con strutture dati ottimizzate.
-     * Prepara sistema per registrazione sequenziale di spiegazioni matematiche.
+     * Inizializza generatore prove con strutture dati pulite.
+     * Prepara il sistema per registrazione sequenziale di spiegazioni.
      */
     public ProofGenerator() {
-        LOGGER.info("=== INIZIALIZZAZIONE GENERATORE PROVE MATEMATICHE ===");
+        LOGGER.info("Inizializzazione ProofGenerator per prove matematiche");
 
         this.explanationSequence = new ArrayList<>();
         this.variableMapping = new HashMap<>();
         this.emptyClauseDerivated = false;
 
-        LOGGER.fine("ProofGenerator pronto per registrazione spiegazioni sequenziali");
+        LOGGER.fine("ProofGenerator pronto per registrazione spiegazioni");
     }
 
     /**
-     * Configura mapping variabili per output human-readable.
-     * Essenziale per generazione prove comprensibili con nomi originali.
+     * Configura mapping variabili per output con nomi originali.
+     * Necessario per generare prove comprensibili dall'utente.
      *
-     * @param mapping mappa ID_numerico → nome_originale
+     * @param mapping mappa ID_numerico → nome_originale delle variabili
      * @throws IllegalArgumentException se mapping null o malformato
      */
     public void setVariableMapping(Map<Integer, String> mapping) {
@@ -90,11 +80,11 @@ public class ProofGenerator {
         this.variableMapping = new HashMap<>(mapping);
         validateVariableMapping();
 
-        LOGGER.fine("Mapping variabili configurato: " + variableMapping.size() + " variabili mappate");
+        LOGGER.fine("Mapping variabili configurato: " + variableMapping.size() + " variabili");
     }
 
     /**
-     * Valida integrità del mapping variabili per prevenzione errori.
+     * Valida integrità del mapping variabili per prevenire errori di output.
      */
     private void validateVariableMapping() {
         for (Map.Entry<Integer, String> entry : variableMapping.entrySet()) {
@@ -112,24 +102,23 @@ public class ProofGenerator {
 
     //endregion
 
-    //region REGISTRAZIONE SPIEGAZIONI E BUILDING PROVE
+    //region REGISTRAZIONE SPIEGAZIONI
 
     /**
-     * REGISTRAZIONE PASSO DI SPIEGAZIONE - Core del sistema di prove
+     * CORE: Registra un passo di spiegazione matematica nella sequenza di prova.
      *
-     * Registra una spiegazione matematica tra due clausole che genera una nuova clausola.
-     * Questo corrisponde esattamente al processo di "risoluzione" nella logica proposizionale.
+     * Questo è il cuore del sistema di prove. Ogni chiamata registra una derivazione
+     * logica tra due clausole che produce una nuova clausola tramite risoluzione.
      *
-     * PROCESSO DI REGISTRAZIONE:
-     * 1. Validazione input per consistenza matematica
-     * 2. Creazione step di spiegazione con copie difensive
-     * 3. Verifica automatica derivazione clausola vuota
-     * 4. Aggiornamento stato interno del generatore
-     * 5. Logging per debugging e audit completo
+     * PROCESSO:
+     * 1. Valida input per consistenza matematica
+     * 2. Crea step immutabile con copie difensive
+     * 3. Verifica se è stata derivata la clausola vuota []
+     * 4. Aggiorna stato interno del generatore
      *
      * @param justifyingClause clausola che ha causato la propagazione
-     * @param conflictClause clausola che è in conflitto
-     * @param explanation risultato della spiegazione tra le due clausole
+     * @param conflictClause clausola che è entrata in conflitto
+     * @param explanation risultato della risoluzione tra le due clausole
      * @throws IllegalArgumentException se clausole malformate
      */
     public void recordResolutionStep(List<Integer> justifyingClause,
@@ -138,11 +127,8 @@ public class ProofGenerator {
 
         LOGGER.finest("Registrazione passo di spiegazione matematica");
 
-        // Validazione input per robustezza
+        // Validazione robusta dell'input
         validateExplanationInputs(justifyingClause, conflictClause, explanation);
-
-        // Log dettagliato per debugging
-        logExplanationDetails(justifyingClause, conflictClause, explanation);
 
         // Creazione step con copie difensive per immutabilità
         ExplanationStep step = new ExplanationStep(
@@ -154,7 +140,7 @@ public class ProofGenerator {
         // Registrazione atomica del passo
         explanationSequence.add(step);
 
-        // Verifica derivazione clausola vuota
+        // Verifica cruciale: clausola vuota derivata?
         if (explanation != null && explanation.isEmpty()) {
             emptyClauseDerivated = true;
             LOGGER.info("*** CLAUSOLA VUOTA [] DERIVATA - PROVA UNSAT COMPLETATA ***");
@@ -164,22 +150,21 @@ public class ProofGenerator {
     }
 
     /**
-     * Valida input per registrazione spiegazione.
+     * Valida che tutti gli input per la registrazione siano corretti.
+     * Verifica che le clausole non siano null e contengano letterali validi.
      */
     private void validateExplanationInputs(List<Integer> justifying, List<Integer> conflict, List<Integer> explanation) {
-        // Validazione clausole non null (possono essere vuote)
         if (justifying == null || conflict == null || explanation == null) {
             throw new IllegalArgumentException("Clausole per spiegazione non possono essere null");
         }
 
-        // Validazione contenuto clausole
         validateClauseContent(justifying, "giustificante");
         validateClauseContent(conflict, "conflitto");
         validateClauseContent(explanation, "spiegazione");
     }
 
     /**
-     * Valida contenuto di una singola clausola.
+     * Valida che una clausola contenga solo letterali validi (non null, non zero).
      */
     private void validateClauseContent(List<Integer> clause, String clauseType) {
         for (Integer literal : clause) {
@@ -190,23 +175,14 @@ public class ProofGenerator {
     }
 
     /**
-     * Registra dettagli spiegazione per debugging avanzato.
-     */
-    private void logExplanationDetails(List<Integer> justifying, List<Integer> conflict, List<Integer> explanation) {
-        LOGGER.finest("Clausola giustificante: " + justifying);
-        LOGGER.finest("Clausola conflitto: " + conflict);
-        LOGGER.finest("Spiegazione risultante: " + explanation);
-    }
-
-    /**
-     * Crea copia difensiva di una clausola per immutabilità.
+     * Crea copia difensiva di una clausola per garantire immutabilità.
      */
     private List<Integer> createSafeCopy(List<Integer> originalClause) {
         return originalClause != null ? new ArrayList<>(originalClause) : new ArrayList<>();
     }
 
     /**
-     * Formatta riepilogo step per logging compatto.
+     * Formatta riepilogo compatto di uno step per logging.
      */
     private String formatStepSummary(ExplanationStep step) {
         return String.format("Spiegazione[%s + %s ⊢ %s]",
@@ -219,10 +195,7 @@ public class ProofGenerator {
      * Formatta clausola per logging compatto.
      */
     private String formatClauseForLogging(List<Integer> clause) {
-        if (clause == null || clause.isEmpty()) {
-            return "[]";
-        }
-        return clause.toString();
+        return (clause == null || clause.isEmpty()) ? "[]" : clause.toString();
     }
 
     //endregion
@@ -230,27 +203,24 @@ public class ProofGenerator {
     //region GENERAZIONE PROVA FINALE
 
     /**
-     * GENERAZIONE PROVA FINALE - Costruzione output matematico completo
+     * CORE: Genera la prova completa di insoddisfacibilità in formato human-readable.
      *
-     * Genera la prova completa di insoddisfacibilità mostrando la sequenza ordinata
-     * di spiegazioni che conducono alla clausola vuota. Il formato segue standard
-     * accademici per massima chiarezza e verificabilità.
+     * Costruisce la sequenza ordinata di spiegazioni che conducono alla clausola vuota.
+     * Il formato segue standard accademici per massima chiarezza e verificabilità.
      *
-     * ALGORITMO GENERAZIONE:
-     * 1. Validazione completezza sequenza spiegazioni
-     * 2. Costruzione output formattato step-by-step
-     * 3. Verifica automatica presenza clausola vuota finale
-     * 4. Generazione stringa prova human-readable
-     * 5. Validazione finale integrità prova generata
+     * ALGORITMO:
+     * 1. Valida che esistano spiegazioni registrate
+     * 2. Formatta ogni step nella sequenza
+     * 3. Verifica che termini con clausola vuota []
+     * 4. Restituisce prova completa come stringa
      *
-     * @return prova completa come stringa formattata
-     * @throws IllegalStateException se prova incompleta
+     * @return prova matematica completa in formato standard
+     * @throws IllegalStateException se prova incompleta o malformata
      */
     public String generateProof() {
         LOGGER.info("=== GENERAZIONE PROVA FINALE INSODDISFACIBILITÀ ===");
 
-        // Validazione preliminare disponibilità dati
-        validateProofGenerationPreconditions();
+        validateProofPreconditions();
 
         StringBuilder proofBuilder = new StringBuilder();
         boolean emptyClauseFound = false;
@@ -259,8 +229,8 @@ public class ProofGenerator {
         for (int stepIndex = 0; stepIndex < explanationSequence.size(); stepIndex++) {
             ExplanationStep step = explanationSequence.get(stepIndex);
 
-            // Formattazione step corrente
-            String formattedStep = formatExplanationStepForOutput(step);
+            // Formatta step corrente in formato standard
+            String formattedStep = formatExplanationStep(step);
             proofBuilder.append(formattedStep);
 
             // Verifica terminazione con clausola vuota
@@ -270,13 +240,12 @@ public class ProofGenerator {
                 break;
             }
 
-            // Separatore tra step (eccetto ultimo)
+            // Separatore tra step
             if (stepIndex < explanationSequence.size() - 1) {
                 proofBuilder.append("\n");
             }
         }
 
-        // Validazione finale prova
         validateGeneratedProof(emptyClauseFound);
 
         String finalProof = proofBuilder.toString();
@@ -286,9 +255,9 @@ public class ProofGenerator {
     }
 
     /**
-     * Valida precondizioni per generazione prova.
+     * Verifica che ci siano le precondizioni per generare una prova valida.
      */
-    private void validateProofGenerationPreconditions() {
+    private void validateProofPreconditions() {
         if (explanationSequence.isEmpty()) {
             LOGGER.warning("Nessuna spiegazione registrata per generazione prova");
             throw new IllegalStateException("Impossibile generare prova: sequenza spiegazioni vuota");
@@ -300,20 +269,20 @@ public class ProofGenerator {
     }
 
     /**
-     * Formatta singola spiegazione per output finale.
-     * Utilizza formato standard: (clausola1) e (clausola2) genera risultato
+     * Formatta singola spiegazione nel formato standard di output.
+     * Formato: (clausola1) e (clausola2) genera risultato
      */
-    private String formatExplanationStepForOutput(ExplanationStep step) {
-        String justifyingFormatted = formatClauseForFinalOutput(step.getJustifyingClause());
-        String conflictFormatted = formatClauseForFinalOutput(step.getConflictClause());
-        String explanationFormatted = formatClauseForFinalOutput(step.getExplanation());
+    private String formatExplanationStep(ExplanationStep step) {
+        String justifyingFormatted = formatClauseForOutput(step.getJustifyingClause());
+        String conflictFormatted = formatClauseForOutput(step.getConflictClause());
+        String explanationFormatted = formatClauseForOutput(step.getExplanation());
 
         return String.format("(%s) e (%s) genera (%s)\n",
                 justifyingFormatted, conflictFormatted, explanationFormatted);
     }
 
     /**
-     * Valida prova generata per completezza e correttezza.
+     * Valida che la prova generata sia completa e corretta.
      */
     private void validateGeneratedProof(boolean emptyClauseFound) {
         if (!emptyClauseFound && emptyClauseDerivated) {
@@ -330,9 +299,9 @@ public class ProofGenerator {
     //region FORMATAZIONE OUTPUT HUMAN-READABLE
 
     /**
-     * Formatta clausola per output finale con nomi variabili originali.
+     * Formatta clausola per output finale usando nomi variabili originali.
      *
-     * ESEMPI FORMATAZIONE:
+     * FORMATI:
      * • [] → "[]" (clausola vuota)
      * • [1] → "P" (clausola unitaria positiva)
      * • [-2] → "!Q" (clausola unitaria negativa)
@@ -341,7 +310,7 @@ public class ProofGenerator {
      * @param clause clausola da formattare
      * @return rappresentazione human-readable
      */
-    private String formatClauseForFinalOutput(List<Integer> clause) {
+    private String formatClauseForOutput(List<Integer> clause) {
         if (clause == null) {
             return "null";
         }
@@ -350,34 +319,32 @@ public class ProofGenerator {
             return "[]";
         }
 
-        // Clausola unitaria - formato semplificato
         if (clause.size() == 1) {
-            return formatSingleLiteralForOutput(clause.get(0));
+            return formatSingleLiteral(clause.get(0));
         }
 
-        // Clausola multipla - ordinamento e formatazione completa
-        return formatMultipleClauseForOutput(clause);
+        return formatMultipleClause(clause);
     }
 
     /**
-     * Formatta clausola con letterali multipli.
+     * Formatta clausola con letterali multipli ordinati per leggibilità.
      */
-    private String formatMultipleClauseForOutput(List<Integer> clause) {
-        // Ordinamento per leggibilità: per variabile, poi per polarità
+    private String formatMultipleClause(List<Integer> clause) {
+        // Ordinamento per leggibilità: prima per variabile, poi per polarità
         List<Integer> sortedLiterals = clause.stream()
-                .sorted(this::compareLiteralsForOutput)
+                .sorted(this::compareLiterals)
                 .collect(Collectors.toList());
 
-        // Formatazione con separatori OR
+        // Unione con separatori OR
         return sortedLiterals.stream()
-                .map(this::formatSingleLiteralForOutput)
+                .map(this::formatSingleLiteral)
                 .collect(Collectors.joining(" | "));
     }
 
     /**
-     * Comparatore per ordinamento letterali nell'output.
+     * Comparatore per ordinamento letterali: prima variabile, poi polarità.
      */
-    private int compareLiteralsForOutput(Integer literal1, Integer literal2) {
+    private int compareLiterals(Integer literal1, Integer literal2) {
         int variable1 = Math.abs(literal1);
         int variable2 = Math.abs(literal2);
 
@@ -396,7 +363,7 @@ public class ProofGenerator {
      * @param literal letterale numerico da formattare
      * @return rappresentazione con nome originale (es. "P" o "!Q")
      */
-    private String formatSingleLiteralForOutput(Integer literal) {
+    private String formatSingleLiteral(Integer literal) {
         if (literal == null) {
             return "null";
         }
@@ -404,62 +371,57 @@ public class ProofGenerator {
         int variable = Math.abs(literal);
         String variableName = variableMapping.getOrDefault(variable, String.valueOf(variable));
 
-        // Formattazione polarità
-        if (literal > 0) {
-            return variableName; // Letterale positivo
-        } else {
-            return "!" + variableName; // Letterale negativo
-        }
+        return literal > 0 ? variableName : "!" + variableName;
     }
 
     //endregion
 
-    //region INTERFACCIA PUBBLICA DI STATO E CONTROLLO
+    //region INTERFACCIA PUBBLICA E STATO
 
     /**
-     * @return true se clausola vuota è stata derivata (prova UNSAT completa)
+     * Verifica se la clausola vuota è stata derivata (prova UNSAT completa).
      */
     public boolean hasEmptyClause() {
         return emptyClauseDerivated;
     }
 
     /**
-     * @return numero totale di spiegazioni registrate nella sequenza
+     * Restituisce numero totale di spiegazioni registrate.
      */
     public int getStepCount() {
         return explanationSequence.size();
     }
 
     /**
-     * @return true se generatore ha spiegazioni registrate
+     * Verifica se il generatore ha spiegazioni registrate.
      */
     public boolean hasExplanations() {
         return !explanationSequence.isEmpty();
     }
 
     /**
-     * @return copia immutabile della sequenza di spiegazioni per analisi
+     * Restituisce copia immutabile della sequenza di spiegazioni per analisi.
      */
     public List<ExplanationStep> getExplanationSequence() {
         return new ArrayList<>(explanationSequence);
     }
 
     /**
-     * Reset completo del generatore per nuovo utilizzo.
-     * Pulisce tutte le strutture dati mantenendo configurazione mapping.
+     * Reset completo del generatore mantenendo il mapping variabili.
+     * Utile per riutilizzo su nuova formula con stesse variabili.
      */
     public void reset() {
-        LOGGER.info("Reset completo ProofGenerator");
+        LOGGER.info("Reset ProofGenerator");
 
         explanationSequence.clear();
         emptyClauseDerivated = false;
 
-        // Mantiene variableMapping per riutilizzo
-        LOGGER.fine("Stato ProofGenerator resettato, mapping variabili preservato");
+        LOGGER.fine("Stato resettato, mapping variabili preservato");
     }
 
     /**
      * Reset completo includendo mapping variabili.
+     * Usare per cambio completo di formula e variabili.
      */
     public void fullReset() {
         reset();
@@ -478,42 +440,28 @@ public class ProofGenerator {
 
     //endregion
 
-    //region CLASSE DI SUPPORTO - EXPLANATION STEP
+    //region CLASSE EXPLANATION STEP
 
     /**
-     * PASSO DI SPIEGAZIONE - Rappresentazione immutabile di un singolo step logico
+     * PASSO DI SPIEGAZIONE - Rappresentazione immutabile di una derivazione logica
      *
      * Incapsula una singola spiegazione matematica tra due clausole che produce
-     * una clausola risultante. Rappresenta l'unità atomica delle prove generate.
+     * una clausola risultante. Unità atomica delle prove generate.
      *
      * COMPONENTI:
      * • Clausola giustificante: ha causato la propagazione
-     * • Clausola conflitto: è in conflitto con propagazione
+     * • Clausola conflitto: è entrata in conflitto con propagazione
      * • Clausola spiegazione: risultato matematico della risoluzione
-     *
-     * INVARIANTI:
-     * • Tutte le clausole sono immutabili dopo costruzione
-     * • Rappresentazione matematicamente corretta
-     * • Thread-safe per utilizzo concorrente
      */
     public static class ExplanationStep {
 
-        /** Clausola che ha giustificato la propagazione causante il conflitto */
         private final List<Integer> justifyingClause;
-
-        /** Clausola che è entrata in conflitto con la propagazione */
         private final List<Integer> conflictClause;
-
-        /** Clausola risultante dalla spiegazione matematica tra le due */
         private final List<Integer> explanation;
 
         /**
          * Costruisce passo di spiegazione con clausole immutabili.
-         * Garantisce immutabilità e thread-safety complete.
-         *
-         * @param justifyingClause clausola giustificante (copiata)
-         * @param conflictClause clausola conflitto (copiata)
-         * @param explanation clausola spiegazione risultante (copiata)
+         * Garantisce thread-safety e immutabilità complete.
          */
         public ExplanationStep(List<Integer> justifyingClause,
                                List<Integer> conflictClause,
@@ -532,39 +480,32 @@ public class ProofGenerator {
                     Collections.emptyList();
         }
 
-        //region ACCESSORS IMMUTABILI
-
-        /** @return clausola giustificante (immutabile) */
+        /**
+         * Restituisce clausola giustificante (immutabile).
+         */
         public List<Integer> getJustifyingClause() {
             return justifyingClause;
         }
 
-        /** @return clausola conflitto (immutabile) */
+        /**
+         * Restituisce clausola conflitto (immutabile).
+         */
         public List<Integer> getConflictClause() {
             return conflictClause;
         }
 
-        /** @return clausola spiegazione (immutabile) */
+        /**
+         * Restituisce clausola spiegazione risultante (immutabile).
+         */
         public List<Integer> getExplanation() {
             return explanation;
         }
 
-        //endregion
-
-        //region UTILITÀ E RAPPRESENTAZIONE
-
         /**
-         * @return true se questo step ha prodotto clausola vuota
+         * Verifica se questo step ha prodotto la clausola vuota [].
          */
         public boolean derivesEmptyClause() {
             return explanation.isEmpty();
-        }
-
-        /**
-         * @return numero totale letterali coinvolti in questo step
-         */
-        public int getTotalLiterals() {
-            return justifyingClause.size() + conflictClause.size() + explanation.size();
         }
 
         /**
@@ -597,8 +538,6 @@ public class ProofGenerator {
         public int hashCode() {
             return Objects.hash(justifyingClause, conflictClause, explanation);
         }
-
-        //endregion
     }
 
     //endregion

@@ -6,42 +6,8 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * TRASFORMAZIONE DI TSEITIN - Conversione CNF in E-CNF equisoddisfacibile
- *
- * Implementa l'algoritmo di Tseitin per la trasformazione di formule CNF in formule
- * equisoddisfacibili E-CNF (Extended CNF), introducendo variabili ausiliarie per
- * ridurre la complessità strutturale mantenendo equivalenza di soddisfacibilità.
- *
- * TEORIA E MOTIVAZIONI:
- * • Riduce la complessità esponenziale nella conversione CNF standard
- * • Introduce variabili ausiliarie che rappresentano sottostrutture complesse
- * • Mantiene equisoddisfacibilità: formula originale SAT ↔ E-CNF SAT
- * • Migliora performance SAT solver su formule con struttura profonda
- *
- * ALGORITMO TSEITIN IMPLEMENTATO:
- * • Analisi complessità strutturale per determinare necessità trasformazione
- * • Generazione variabili ausiliarie univoche per sottostrutture
- * • Creazione clausole di equivalenza: var_aux ↔ sottostruttura
- * • Costruzione E-CNF finale con clausole Tseitin + clausola principale
- * • Validazione matematica correttezza trasformazione
- *
- * BENEFICI PERFORMANCE:
- * • Clausole più corte e uniformi per SAT solver
- * • Riduzione branching factor durante ricerca
- * • Miglior locality di reference nelle strutture dati
- * • Propagazione unitaria più efficace
- *
- * SOGLIA INTELLIGENTE:
- * • Trasformazione applicata solo per complessità > soglia configurabile
- * • Evita overhead per formule già semplici
- * • Analisi automatica cost-benefit per ogni formula
- *
- * ESEMPI PRATICI:
- * Formula complessa: ((A ∧ B) ∨ (C ∧ D)) ∧ ((E ∨ F) → (G ∧ H))
- * E-CNF: t1 ↔ (A ∧ B), t2 ↔ (C ∧ D), t3 ↔ (t1 ∨ t2), ... + formula principale
- *
- * @author Amos Lo Verde
- * @version 2.0.0
+ * Implementa l'algoritmo di Tseitin per la trasformazione di formule CNF in formule equisoddisfacibili
+ * E-CNF, introducendo variabili ausiliarie mantenendo l'equivalenza di soddisfacibilità.
  */
 public class TseitinConverter {
 
@@ -71,7 +37,7 @@ public class TseitinConverter {
 
     /**
      * Clausole Tseitin generate durante la trasformazione.
-     * Ogni clausola rappresenta equivalenza: var_tseitin ↔ sottostruttura
+     * Ogni clausola rappresenta equivalenza: var_tseitin <-> sottostruttura
      */
     private List<String> generatedTseitinClauses;
 
@@ -364,7 +330,7 @@ public class TseitinConverter {
     //region GENERAZIONE CLAUSOLE EQUIVALENZA
 
     /**
-     * Genera clausole per equivalenza atomo: tseitinVar ↔ atom.
+     * Genera clausole per equivalenza atomo: tseitinVar <-> atom.
      */
     private void generateAtomEquivalenceClauses(String atom, String tseitinVar) {
         if (atom == null || atom.trim().isEmpty()) {
@@ -374,17 +340,17 @@ public class TseitinConverter {
 
         String cleanAtom = atom.trim();
 
-        // tseitinVar → atom: !tseitinVar ∨ atom
+        // tseitinVar → atom: !tseitinVar | atom
         generatedTseitinClauses.add("!" + tseitinVar + " | " + cleanAtom);
 
-        // atom → tseitinVar: !atom ∨ tseitinVar
+        // atom → tseitinVar: !atom | tseitinVar
         generatedTseitinClauses.add("!" + cleanAtom + " | " + tseitinVar);
 
-        conversionLog.append("EQUIVALENZA ATOMO: ").append(tseitinVar).append(" ↔ ").append(cleanAtom).append("\n");
+        conversionLog.append("EQUIVALENZA ATOMO: ").append(tseitinVar).append(" <-> ").append(cleanAtom).append("\n");
     }
 
     /**
-     * Genera clausole per equivalenza negazione: tseitinVar ↔ ¬operand.
+     * Genera clausole per equivalenza negazione: tseitinVar <-> ¬operand.
      */
     private void generateNegationEquivalenceClauses(CNFConverter notStructure, String tseitinVar) {
         if (notStructure.operand == null) {
@@ -396,27 +362,27 @@ public class TseitinConverter {
             // Caso semplice: NOT di atomo
             String atom = notStructure.operand.atom;
             if (atom != null) {
-                // tseitinVar ↔ ¬atom
+                // tseitinVar <-> ¬atom
                 generatedTseitinClauses.add("!" + tseitinVar + " | !" + atom);
                 generatedTseitinClauses.add(atom + " | " + tseitinVar);
 
-                conversionLog.append("EQUIVALENZA NEGAZIONE: ").append(tseitinVar).append(" ↔ !").append(atom).append("\n");
+                conversionLog.append("EQUIVALENZA NEGAZIONE: ").append(tseitinVar).append(" <-> !").append(atom).append("\n");
             }
         } else {
             // Caso complesso: NOT di sottostruttura
             String subVariable = generateUniqueVariable();
             generateClausesForSubstructure(notStructure.operand, subVariable);
 
-            // tseitinVar ↔ ¬subVariable
+            // tseitinVar <-> ¬subVariable
             generatedTseitinClauses.add("!" + tseitinVar + " | !" + subVariable);
             generatedTseitinClauses.add(subVariable + " | " + tseitinVar);
 
-            conversionLog.append("EQUIVALENZA NEGAZIONE COMPLESSA: ").append(tseitinVar).append(" ↔ !").append(subVariable).append("\n");
+            conversionLog.append("EQUIVALENZA NEGAZIONE COMPLESSA: ").append(tseitinVar).append(" <-> !").append(subVariable).append("\n");
         }
     }
 
     /**
-     * Genera clausole per equivalenza congiunzione: tseitinVar ↔ (op1 ∧ op2 ∧ ...).
+     * Genera clausole per equivalenza congiunzione: tseitinVar <-> (op1 & op2 & ...).
      */
     private void generateConjunctionEquivalenceClauses(CNFConverter andStructure, String tseitinVar) {
         if (andStructure.operands == null || andStructure.operands.isEmpty()) {
@@ -433,12 +399,12 @@ public class TseitinConverter {
             generateClausesForSubstructure(operand, subVar);
         }
 
-        // tseitinVar → (subVar1 ∧ subVar2 ∧ ...)
+        // tseitinVar → (subVar1 & subVar2 & ...)
         for (String subVar : subVariables) {
             generatedTseitinClauses.add("!" + tseitinVar + " | " + subVar);
         }
 
-        // (subVar1 ∧ subVar2 ∧ ...) → tseitinVar
+        // (subVar1 & subVar2 & ...) → tseitinVar
         StringBuilder clause = new StringBuilder();
         for (int i = 0; i < subVariables.size(); i++) {
             if (i > 0) clause.append(" | ");
@@ -447,12 +413,12 @@ public class TseitinConverter {
         clause.append(" | ").append(tseitinVar);
         generatedTseitinClauses.add(clause.toString());
 
-        conversionLog.append("EQUIVALENZA CONGIUNZIONE: ").append(tseitinVar).append(" ↔ (")
-                .append(String.join(" ∧ ", subVariables)).append(")\n");
+        conversionLog.append("EQUIVALENZA CONGIUNZIONE: ").append(tseitinVar).append(" <-> (")
+                .append(String.join(" & ", subVariables)).append(")\n");
     }
 
     /**
-     * Genera clausole per equivalenza disgiunzione: tseitinVar ↔ (op1 ∨ op2 ∨ ...).
+     * Genera clausole per equivalenza disgiunzione: tseitinVar <-> (op1 | op2 | ...).
      */
     private void generateDisjunctionEquivalenceClauses(CNFConverter orStructure, String tseitinVar) {
         if (orStructure.operands == null || orStructure.operands.isEmpty()) {
@@ -469,20 +435,20 @@ public class TseitinConverter {
             generateClausesForSubstructure(operand, subVar);
         }
 
-        // tseitinVar → (subVar1 ∨ subVar2 ∨ ...)
+        // tseitinVar → (subVar1 | subVar2 | ...)
         StringBuilder clause1 = new StringBuilder("!" + tseitinVar);
         for (String subVar : subVariables) {
             clause1.append(" | ").append(subVar);
         }
         generatedTseitinClauses.add(clause1.toString());
 
-        // (subVar1 ∨ subVar2 ∨ ...) → tseitinVar
+        // (subVar1 | subVar2 | ...) → tseitinVar
         for (String subVar : subVariables) {
             generatedTseitinClauses.add("!" + subVar + " | " + tseitinVar);
         }
 
-        conversionLog.append("EQUIVALENZA DISGIUNZIONE: ").append(tseitinVar).append(" ↔ (")
-                .append(String.join(" ∨ ", subVariables)).append(")\n");
+        conversionLog.append("EQUIVALENZA DISGIUNZIONE: ").append(tseitinVar).append(" <-> (")
+                .append(String.join(" | ", subVariables)).append(")\n");
     }
 
     //endregion

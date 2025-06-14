@@ -6,36 +6,9 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * PRINCIPIO DI SUSSUNZIONE - Ottimizzazione avanzata per eliminazione clausole ridondanti
- *
  * Implementa il principio matematico di sussunzione per l'ottimizzazione di formule CNF,
- * eliminando clausole ridondanti che sono sovrainsieme di altre clausole più specifiche,
+ * eliminando clausole che sono sovrainsieme di altre clausole più specifiche,
  * mantenendo perfetta equivalenza logica della formula.
- *
- * TEORIA MATEMATICA:
- * Una clausola C1 sussume una clausola C2 se e solo se:
- * • Tutti i letterali di C1 sono contenuti in C2 (C1 ⊆ C2)
- * • C2 può essere eliminata senza alterare la soddisfacibilità
- * • La formula risultante è logicamente equivalente all'originale
- *
- * ALGORITMO IMPLEMENTATO:
- * • Conversione clausole in rappresentazione Set per confronti O(1)
- * • Confronto sistematico a coppie tra tutte le clausole
- * • Identificazione relazioni di sussunzione bidirezionali
- * • Eliminazione clausole sussumete (più generali)
- * • Ricostruzione formula ottimizzata mantenendo struttura
- *
- * BENEFICI OTTIMIZZAZIONE:
- * • Riduzione spazio di ricerca per algoritmi SAT
- * • Miglioramento performance propagazione
- * • Semplificazione formula senza perdita informazioni
- * • Debugging facilitato con formule più compatte
- *
- * ESEMPI PRATICI:
- * Formula: (P) ∧ (!R ∨ !Q) ∧ (P ∨ Q ∨ !R) ∧ (A ∨ !R ∨ B ∨ !Q) ∧ (R ∨ !Q)
- * • (P) sussume (P ∨ Q ∨ !R) → elimina (P ∨ Q ∨ !R)
- * • (!R ∨ !Q) sussume (A ∨ !R ∨ B ∨ !Q) → elimina (A ∨ !R ∨ B ∨ !Q)
- * Risultato: (P) ∧ (!R ∨ !Q) ∧ (R ∨ !Q)
  *
  */
 public class SubsumptionPrinciple {

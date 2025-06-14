@@ -8,35 +8,11 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * CONVERTITORE CNF - Sistema completo per rappresentazione e trasformazione formule logiche
+ * Sistema completo per rappresentazione e trasformazione formule logiche
  *
  * Rappresenta formule logiche proposizionali in forma ad albero e implementa la loro
  * trasformazione in Forma Normale Congiuntiva (CNF), applicando algoritmi matematici
  * rigorosi per preservare equivalenza logica durante tutte le trasformazioni.
- *
- * TEORIA MATEMATICA:
- * • CNF: Congiunzione di clausole, dove ogni clausola è disgiunzione di letterali
- * • Letterale: Variabile proposizionale o sua negazione (P, ¬P)
- * • Clausola: Disgiunzione di letterali (P ∨ ¬Q ∨ R)
- * • Formula CNF: Congiunzione di clausole ((P ∨ Q) ∧ (¬P ∨ R) ∧ (¬Q ∨ ¬R))
- *
- * ALGORITMI IMPLEMENTATI:
- * • Eliminazione implicazioni: A → B ≡ ¬A ∨ B
- * • Eliminazione biimplicazioni: A ↔ B ≡ (A → B) ∧ (B → A)
- * • Leggi di De Morgan: ¬(A ∨ B) ≡ ¬A ∧ ¬B, ¬(A ∧ B) ≡ ¬A ∨ ¬B
- * • Distribuzione OR su AND: A ∨ (B ∧ C) ≡ (A ∨ B) ∧ (A ∨ C)
- * • Semplificazione e normalizzazione strutturale
- *
- * STRUTTURA AD ALBERO:
- * • Nodi interni: Operatori logici (AND, OR, NOT)
- * • Foglie: Variabili atomiche proposizionali
- * • Rappresentazione ricorsiva per formule di complessità arbitraria
- *
- * UTILIZZO TIPICO:
- * • Parser di formule: costruzione alberi da input testuale
- * • Preprocessing SAT: conversione formule per solver
- * • Verificazione equivalenza: confronto formule logiche
- * • Ottimizzazione: semplificazione prima della risoluzione
  *
  */
 public class CNFConverter {
@@ -50,9 +26,9 @@ public class CNFConverter {
      * Coprono tutti gli operatori della logica proposizionale standard.
      */
     public enum Type {
-        AND,    // Congiunzione: A ∧ B
-        OR,     // Disgiunzione: A ∨ B
-        NOT,    // Negazione: ¬A
+        AND,    // Congiunzione: A & B
+        OR,     // Disgiunzione: A | B
+        NOT,    // Negazione: !A
         ATOM    // Variabile atomica: P, Q, R, ...
     }
 
@@ -176,10 +152,10 @@ public class CNFConverter {
      * Normalizza le negazioni spingendole verso le foglie usando le leggi di De Morgan.
      *
      * TRASFORMAZIONI APPLICATE:
-     * • ¬(A ∨ B) → ¬A ∧ ¬B
-     * • ¬(A ∧ B) → ¬A ∨ ¬B
-     * • ¬¬A → A
-     * • Negazioni atomiche preservate: ¬P rimane ¬P
+     * • !(A | B) -> !A & !B
+     * • !(A & B) -> !A | !B
+     * • !!A -> A
+     * • Negazioni atomiche preservate: !P rimane !P
      *
      * @return formula con negazioni normalizzate
      */
@@ -217,15 +193,15 @@ public class CNFConverter {
 
         return switch (innerFormula.type) {
             case ATOM ->
-                // ¬A rimane ¬A (forma normale per letterali)
+                // !A rimane !A (forma normale per letterali)
                     new CNFConverter(innerFormula);
 
             case NOT ->
-                // ¬¬A → A (eliminazione doppia negazione)
+                // !!A -> A (eliminazione doppia negazione)
                     innerFormula.operand;
 
             case AND -> {
-                // ¬(A ∧ B ∧ C) → ¬A ∨ ¬B ∨ ¬C (De Morgan per congiunzioni)
+                // !(A & B & C) -> !A | !B | !C (De Morgan per congiunzioni)
                 List<CNFConverter> negatedOperands = new ArrayList<>();
                 for (CNFConverter operand : innerFormula.operands) {
                     negatedOperands.add(new CNFConverter(operand));
@@ -234,7 +210,7 @@ public class CNFConverter {
             }
 
             case OR -> {
-                // ¬(A ∨ B ∨ C) → ¬A ∧ ¬B ∧ ¬C (De Morgan per disgiunzioni)
+                // !(A | B | C) -> !A & !B & !C (De Morgan per disgiunzioni)
                 List<CNFConverter> negatedOperands = new ArrayList<>();
                 for (CNFConverter operand : innerFormula.operands) {
                     negatedOperands.add(new CNFConverter(operand));
@@ -252,9 +228,9 @@ public class CNFConverter {
      * Distribuisce OR sopra AND per ottenere forma canonica CNF.
      *
      * PROPRIETÀ DISTRIBUTIVA APPLICATA:
-     * • A ∨ (B ∧ C) → (A ∨ B) ∧ (A ∨ C)
-     * • (A ∧ B) ∨ C → (A ∨ C) ∧ (B ∨ C)
-     * • (A ∧ B) ∨ (C ∧ D) → (A ∨ C) ∧ (A ∨ D) ∧ (B ∨ C) ∧ (B ∨ D)
+     * • A | (B & C) -> (A | B) & (A | C)
+     * • (A & B) | C -> (A | C) & (B | C)
+     * • (A & B) | (C & D) -> (A | C) & (A | D) & (B | C) & (B | D)
      *
      * @return formula in forma CNF canonica
      */
@@ -314,7 +290,7 @@ public class CNFConverter {
             return new CNFConverter(Type.OR, processedOperands);
         }
 
-        // Applica distribuzione: (A ∨ B ∨ (C ∧ D)) → (A ∨ B ∨ C) ∧ (A ∨ B ∨ D)
+        // Applica distribuzione: (A | B | (C & D)) -> (A | B | C) & (A | B | D)
         return applyDistributionTransformation(processedOperands, andOperand, andIndex);
     }
 
@@ -350,8 +326,8 @@ public class CNFConverter {
      * Semplifica la struttura della formula eliminando ridondanze e ottimizzando.
      *
      * OTTIMIZZAZIONI APPLICATE:
-     * • Appiattimento operatori nidificati: (A ∧ (B ∧ C)) → (A ∧ B ∧ C)
-     * • Eliminazione duplicati: (A ∨ A ∨ B) → (A ∨ B)
+     * • Appiattimento operatori nidificati: (A & (B & C)) -> (A & B & C)
+     * • Eliminazione duplicati: (A | A | B) -> (A | B)
      * • Semplificazione strutturale: singoli operandi estratti
      * • Normalizzazione ordering per confronti
      *
@@ -387,7 +363,7 @@ public class CNFConverter {
             CNFConverter simplified = operand.simplifyStructure();
 
             if (simplified.type == Type.AND) {
-                // Appiattimento: (A ∧ (B ∧ C)) → (A ∧ B ∧ C)
+                // Appiattimento: (A & (B & C)) -> (A & B & C)
                 flattenedOperands.addAll(simplified.operands);
             } else {
                 flattenedOperands.add(simplified);
@@ -410,7 +386,7 @@ public class CNFConverter {
             CNFConverter simplified = operand.simplifyStructure();
 
             if (simplified.type == Type.OR) {
-                // Appiattimento: (A ∨ (B ∨ C)) → (A ∨ B ∨ C)
+                // Appiattimento: (A | (B | C)) -> (A | B | C)
                 flattenedOperands.addAll(simplified.operands);
             } else {
                 flattenedOperands.add(simplified);
@@ -520,7 +496,7 @@ public class CNFConverter {
      *
      * FORMATO OUTPUT:
      * • Atomi: nome variabile (P, Q, R)
-     * • Negazioni: !operando (!P, !(P ∨ Q))
+     * • Negazioni: !operando (!P, !(P | Q))
      * • Congiunzioni: operando1 & operando2 & ... con parentesi se necessarie
      * • Disgiunzioni: operando1 | operando2 | ... con parentesi se necessarie
      *
@@ -582,9 +558,9 @@ public class CNFConverter {
     public String toCompactString() {
         return switch (this.type) {
             case ATOM -> atom;
-            case NOT -> "¬" + operand.toCompactString();
-            case AND -> "∧(" + operands.size() + ")";
-            case OR -> "∨(" + operands.size() + ")";
+            case NOT -> "!" + operand.toCompactString();
+            case AND -> "&(" + operands.size() + ")";
+            case OR -> "|(" + operands.size() + ")";
         };
     }
 
@@ -629,40 +605,6 @@ public class CNFConverter {
                     maxDepth = Math.max(maxDepth, operand.calculateDepth());
                 }
                 yield 1 + maxDepth;
-            }
-        };
-    }
-
-    /**
-     * Verifica se la formula è già in forma CNF.
-     */
-    public boolean isInCNF() {
-        return switch (this.type) {
-            case ATOM -> true;
-            case NOT -> operand.type == Type.ATOM; // Solo negazioni di atomi
-            case OR -> {
-                // OR può contenere solo atomi e negazioni di atomi
-                for (CNFConverter operand : operands) {
-                    if (operand.type == Type.AND) {
-                        yield false; // OR non può contenere AND in CNF
-                    }
-                    if (operand.type == Type.NOT && operand.operand.type != Type.ATOM) {
-                        yield false; // Negazioni solo di atomi
-                    }
-                    if (operand.type == Type.OR) {
-                        yield false; // OR nidificati non canonici
-                    }
-                }
-                yield true;
-            }
-            case AND -> {
-                // AND può contenere solo clausole (OR di letterali) o letterali
-                for (CNFConverter operand : operands) {
-                    if (!operand.isValidCNFClause()) {
-                        yield false;
-                    }
-                }
-                yield true;
             }
         };
     }
