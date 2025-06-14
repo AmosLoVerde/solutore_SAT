@@ -10,6 +10,7 @@ import org.sat.cdcl.SATResult;
 import org.sat.cdcl.SATStatistics;
 import org.sat.cnf.CNFConverter;
 import org.sat.cnf.LogicFormulaParser;
+import org.sat.optionalfeatures.PigeonholeProblem;
 import org.sat.optionalfeatures.SubsumptionPrinciple;
 import org.sat.optionalfeatures.TseitinConverter;
 
@@ -21,7 +22,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.logging.Logger;
 
 /**
  * SOLUTORE SAT CDCL (Conflict-Driven Clause Learning)
@@ -43,15 +43,17 @@ import java.util.logging.Logger;
  * - Configurazione opzioni tramite flag (-opt=<flag>, -opt=all)
  * - Timeout configurabile per evitare elaborazioni troppo dispendiose (-t secondi)
  * - Output directory personalizzabile per organizzazione risultati (-o directory)
+ * - Generazione istanze Pigeonhole Problem (-gen=pigeonhole <numero>)
  *
  * ORGANIZZAZIONE DEGLI OUTPUT STRUTTURATI:
  * - CNF/: Formule convertite in Forma Normale Congiuntiva
  * - E-CNF/: Formule Tseitin equisoddisfacibili (se si attiva -opt=t)
  * - RESULT/: Risultati SAT/UNSAT con modelli e prove matematiche
  * - STATS/: Statistiche dettagliate suddivise per tipologia ottimizzazione
+ * - PIGEONHOLE/: Istanze generate del Pigeonhole Problem (se si attiva -gen=pigeonhole)
  *
  * @author Amos Lo Verde
- * @version 1.8.8
+ * @version 1.9.0
  */
 public final class Main {
     //region CONFIGURAZIONE PARAMETRI APPLICAZIONE
@@ -65,6 +67,7 @@ public final class Main {
     private static final String OUTPUT_PARAM = "-o";
     private static final String TIMEOUT_PARAM = "-t";
     private static final String OPT_PARAM = "-opt=";
+    private static final String GEN_PARAM = "-gen=";
 
     /**
      * Flag ottimizzazioni disponibili
@@ -75,10 +78,21 @@ public final class Main {
     private static final String OPT_ALL = "all";
 
     /**
+     * Flag generazione problemi disponibili
+     * */
+    private static final String GEN_PIGEONHOLE = "pigeonhole";
+
+    /**
      * Configurazioni timeout di default e limiti
      * */
     private static final int DEFAULT_TIMEOUT_SECONDS = 10;
     private static final int MIN_TIMEOUT_SECONDS = 5;
+
+    /**
+     * Limiti per generazione istanze
+     * */
+    private static final int MIN_PIGEONHOLE_INSTANCES = 1;
+    private static final int MAX_PIGEONHOLE_INSTANCES = 100;
 
     /**
      * Previene istanziazione - classe utility
@@ -100,7 +114,7 @@ public final class Main {
      * FLUSSO ESECUZIONE:
      * 1. Parsing e validazione parametri linea di comando
      * 2. Configurazione ambiente di esecuzione (timeout, ottimizzazioni)
-     * 3. Utilizzo della modalità appropriata (file singolo oppure directory)
+     * 3. Utilizzo della modalità appropriata (file singolo, directory, o generazione)
      * 4. Gestione errori globali e pulizia finale delle risorse
      *
      * @param args parametri linea di comando forniti dall'utente
@@ -133,13 +147,17 @@ public final class Main {
     /**
      * Esegue la pipeline principale di elaborazione basata sulla configurazione.
      *
-     * Determina automaticamente la modalità operativa (file singolo oppure directory)
+     * Determina automaticamente la modalità operativa (file singolo, directory, o generazione)
      * e delega all'handler appropriato per l'esecuzione specializzata.
      *
      * @param config configurazione validata contenente tutti i parametri
      */
     private static void executeMainPipeline(SolverConfiguration config) {
-        if (config.isFileMode) {
+        if (config.isGenerationMode) {
+            System.out.println("[I] Modalità: Generazione istanze " + config.generationType);
+            // Processatore generazione istanze
+            processInstanceGeneration(config);
+        } else if (config.isFileMode) {
             System.out.println("[I] Modalità: Elaborazione file singolo");
             // Processatore del file singolo
             processSingleFile(config);
@@ -197,14 +215,21 @@ public final class Main {
      */
     private static void displayConfigurationSummary(SolverConfiguration config) {
         System.out.println("\n-->> CONFIGURAZIONE SOLUTORE SAT <<--");
-        System.out.println("Modalità: " + (config.isFileMode ? "File singolo" : "Directory"));
-        System.out.println("Input: " + config.inputPath);
-        System.out.println("Output: " + (config.outputPath != null ? config.outputPath : "Directory input"));
-        System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
 
-        // Mostra le opzioni aggiuntive: tseitin, sussunzione, reinizio
-        List<String> activeOpts = buildActiveOptimizationsList(config);
-        System.out.println("Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        if (config.isGenerationMode) {
+            System.out.println("Modalità: Generazione istanze " + config.generationType);
+            System.out.println("Numero istanze: " + config.generationCount);
+        } else {
+            System.out.println("Modalità: " + (config.isFileMode ? "File singolo" : "Directory"));
+            System.out.println("Input: " + config.inputPath);
+            System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
+
+            // Mostra le opzioni aggiuntive: tseitin, sussunzione, reinizio
+            List<String> activeOpts = buildActiveOptimizationsList(config);
+            System.out.println("Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        }
+
+        System.out.println("Output: " + (config.outputPath != null ? config.outputPath : "Directory input"));
         System.out.println("====================================\n");
     }
 
@@ -220,6 +245,73 @@ public final class Main {
         if (config.useSubsumption) activeOpts.add("Sussunzione");
         if (config.useRestart) activeOpts.add("Restart");
         return activeOpts;
+    }
+
+    //endregion
+
+    //region GENERAZIONE ISTANZE
+
+    /**
+     * Processa richiesta di generazione istanze per problemi specifici.
+     *
+     * @param config configurazione contenente tipo generazione e parametri
+     */
+    private static void processInstanceGeneration(SolverConfiguration config) {
+        System.out.println("-->> GENERAZIONE ISTANZE <<--");
+        System.out.println("Tipo: " + config.generationType);
+        System.out.println("Numero istanze: " + config.generationCount);
+        System.out.println("=========================\n");
+
+        try {
+            switch (config.generationType) {
+                case GEN_PIGEONHOLE -> {
+                    generatePigeonholeInstances(config);
+                }
+                default -> {
+                    throw new IllegalArgumentException("Tipo generazione non supportato: " + config.generationType);
+                }
+            }
+
+            System.out.println("[I] Generazione istanze completata con successo!");
+
+        } catch (Exception e) {
+            handleGenerationError(config.generationType, e);
+        }
+    }
+
+    /**
+     * Genera istanze del Pigeonhole Problem utilizzando il generatore dedicato.
+     *
+     * @param config configurazione con parametri generazione
+     */
+    private static void generatePigeonholeInstances(SolverConfiguration config) {
+        System.out.println("Generazione " + config.generationCount + " istanze Pigeonhole Problem...");
+
+        // Inizializza generatore
+        PigeonholeProblem generator = new PigeonholeProblem();
+
+        // Configura directory output
+        String outputDir = config.outputPath != null ? config.outputPath : ".";
+        generator.setOutputDirectory(outputDir);
+
+        // Genera istanze
+        generator.generateInstances(config.generationCount);
+
+        // Mostra report finale
+        System.out.println("\n[I] Report generazione:");
+        System.out.println("Istanze create: " + generator.getGeneratedInstancesCount());
+        System.out.println("Directory output: " + generator.getOutputDirectory());
+    }
+
+    /**
+     * Gestisce errori durante generazione istanze.
+     *
+     * @param generationType tipo di generazione che ha causato errore
+     * @param e eccezione verificatasi
+     */
+    private static void handleGenerationError(String generationType, Exception e) {
+        System.out.println("[E] Errore durante generazione istanze " + generationType + ": " + e.getMessage());
+        throw new RuntimeException("Generazione istanze fallita", e);
     }
 
     //endregion
@@ -1126,7 +1218,10 @@ public final class Main {
                 baseConfig.timeoutSeconds,
                 baseConfig.useTseitin,
                 baseConfig.useSubsumption,
-                baseConfig.useRestart
+                baseConfig.useRestart,
+                false, // non modalità generazione
+                null,  // nessun tipo generazione
+                0      // nessun conteggio generazione
         );
     }
 
@@ -1148,12 +1243,20 @@ public final class Main {
         System.out.println("UTILIZZO:");
         System.out.println("  java -jar solutore_SAT.jar [opzioni]\n");
 
-        System.out.println("OPZIONI PRINCIPALI:");
-        System.out.println("  -f <file>       Elabora un singolo file .txt");
-        System.out.println("  -d <directory>  Elabora tutti i file .txt in una directory");
-        System.out.println("  -o <directory>  Directory di output (default: stessa di input)");
-        System.out.println("  -t <secondi>    Timeout per formula (min: 5, default: 10)");
-        System.out.println("  -h              Mostra questa guida\n");
+        System.out.println("MODALITÀ OPERATIVE:");
+        System.out.println("  1. RISOLUZIONE SAT:");
+        System.out.println("     -f <file>       Elabora un singolo file .txt");
+        System.out.println("     -d <directory>  Elabora tutti i file .txt in una directory");
+        System.out.println("     -o <directory>  Directory di output (default: stessa di input)");
+        System.out.println("     -t <secondi>    Timeout per formula (min: 5, default: 10)");
+        System.out.println("     -opt=<flags>    Ottimizzazioni (s=sussunzione, t=tseitin, r=restart, all=tutte)");
+        System.out.println();
+        System.out.println("  2. GENERAZIONE ISTANZE:");
+        System.out.println("     -gen=pigeonhole <numero>  Genera istanze Pigeonhole Problem (1-100)");
+        System.out.println("     -o <directory>           Directory output per istanze generate");
+        System.out.println();
+        System.out.println("  3. AIUTO:");
+        System.out.println("     -h              Mostra questa guida\n");
 
         System.out.println("OTTIMIZZAZIONI DISPONIBILI (-opt=<flags>):");
         System.out.println("  s = Sussunzione      (elimina clausole ridondanti)");
@@ -1162,30 +1265,36 @@ public final class Main {
         System.out.println("  all = Tutte le ottimizzazioni disponibili\n");
 
         System.out.println("ESEMPI DI UTILIZZO:");
-        System.out.println("  # File singolo base");
+        System.out.println("  # Risoluzione SAT - File singolo base");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt\n");
 
-        System.out.println("  # Con opzioni aggiuntive restart e sussunzione");
+        System.out.println("  # Risoluzione SAT - Con opzioni aggiuntive restart e sussunzione");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=sr\n");
 
-        System.out.println("  # Directory con tutte le opzioni aggiuntive");
+        System.out.println("  # Risoluzione SAT - Directory con tutte le opzioni aggiuntive");
         System.out.println("  java -jar solutore_SAT.jar -d ./problemi/ -opt=all -t 60\n");
 
-        System.out.println("  # Output personalizzato");
+        System.out.println("  # Generazione istanze Pigeonhole Problem");
+        System.out.println("  java -jar solutore_SAT.jar -gen=pigeonhole 15 -o ./output/\n");
+
+        System.out.println("  # Risoluzione SAT - Output personalizzato");
         System.out.println("  java -jar solutore_SAT.jar -d ./input/ -o ./output/ -opt=t\n");
 
         System.out.println("OUTPUT GENERATO:");
-        System.out.println("  CNF/        Formula convertite in Forma Normale Congiuntiva");
-        System.out.println("  E-CNF/      Formula Tseitin equisoddisfacibili (con -opt=t)");
-        System.out.println("  RESULT/     Risultati SAT/UNSAT con modelli e prove");
-        System.out.println("  STATS/      Statistiche dettagliate per tipo ottimizzazione\n");
+        System.out.println("  CNF/          Formula convertite in Forma Normale Congiuntiva");
+        System.out.println("  E-CNF/        Formula Tseitin equisoddisfacibili (con -opt=t)");
+        System.out.println("  RESULT/       Risultati SAT/UNSAT con modelli e prove");
+        System.out.println("  STATS/        Statistiche dettagliate per tipo ottimizzazione");
+        System.out.println("  PIGEONHOLE/   Istanze generate del Pigeonhole Problem\n");
 
         System.out.println("NOTE OPERATIVE:");
         System.out.println("  • Formule supportate: AND(&), OR(|), NOT(!), IMPLIES(->), IFF(<->)");
+        System.out.println("  • Le modalità risoluzione SAT e generazione istanze sono mutualmente esclusive");
         System.out.println("  • Tseitin raccomandato per formule con >8 operatori");
         System.out.println("  • Restart efficace su problemi con pattern di stallo");
         System.out.println("  • Timeout minimo 5s per evitare interruzioni premature");
-        System.out.println("  • Batch elabora automaticamente tutti i .txt della directory\n");
+        System.out.println("  • Batch elabora automaticamente tutti i .txt della directory");
+        System.out.println("  • Pigeonhole Problem genera istanze UNSAT per testing\n");
 
         System.out.println("===============================================\n");
     }
@@ -1208,9 +1317,13 @@ public final class Main {
         final boolean useTseitin;
         final boolean useSubsumption;
         final boolean useRestart;
+        final boolean isGenerationMode;
+        final String generationType;
+        final int generationCount;
 
         SolverConfiguration(String inputPath, String outputPath, boolean isFileMode,
-                            int timeoutSeconds, boolean useTseitin, boolean useSubsumption, boolean useRestart) {
+                            int timeoutSeconds, boolean useTseitin, boolean useSubsumption, boolean useRestart,
+                            boolean isGenerationMode, String generationType, int generationCount) {
             this.inputPath = inputPath;
             this.outputPath = outputPath;
             this.isFileMode = isFileMode;
@@ -1218,6 +1331,9 @@ public final class Main {
             this.useTseitin = useTseitin;
             this.useSubsumption = useSubsumption;
             this.useRestart = useRestart;
+            this.isGenerationMode = isGenerationMode;
+            this.generationType = generationType;
+            this.generationCount = generationCount;
         }
     }
 
@@ -1235,8 +1351,9 @@ public final class Main {
          *
          * PARAMETRI SUPPORTATI:
          * -h: Mostra help e termina
-         * -f <file>: Input file singolo (esclusivo con -d)
-         * -d <dir>: Input directory per batch (esclusivo con -f)
+         * -f <file>: Input file singolo (esclusivo con -d e -gen)
+         * -d <dir>: Input directory per batch (esclusivo con -f e -gen)
+         * -gen=<tipo> <numero>: Generazione istanze (esclusivo con -f e -d)
          * -o <dir>: Directory output personalizzata
          * -t <sec>: Timeout in secondi per singola risoluzione
          * -opt=<flags>: Ottimizzazioni (t=Tseitin, s=Subsumption, r=Restart)
@@ -1251,9 +1368,12 @@ public final class Main {
             String outputPath = null;
             boolean isFileMode = false;                     // Flag per modalità file singolo (-f)
             boolean isDirectoryMode = false;                // Flag per modalità directory (-d)
+            boolean isGenerationMode = false;               // Flag per modalità generazione (-gen)
             boolean useTseitin = false;                     // Opzione di conversione in E-CNF via Tseitin
             boolean useSubsumption = false;                 // Opzione di eliminazione clausole soprainsieme
             boolean useRestart = false;                     // Opzione di reinizio
+            String generationType = null;                   // Tipo di generazione (pigeonhole, ...)
+            int generationCount = 0;                        // Numero istanze da generare
             int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;   // Timeout default se non specificato
 
             // Processa sequenzialmente ogni argomento della command line
@@ -1265,129 +1385,159 @@ public final class Main {
                         return null; // Segnala al chiamante di terminare
                     }
 
-                    // Input da file singolo (mutualmente esclusivo con directory)
+                    // Input da file singolo (mutualmente esclusivo con directory e generazione)
                     case FILE_PARAM -> {
-                        // Previene il conflitto con modalità directory
-                        if (isDirectoryMode) {
-                            throw new IllegalArgumentException("Non è possibile usare sia -f che -d");
-                        }
-                        // Ottiene il path e verifica esistenza file
-                        inputPath = getNextArgument(args, i++, "file");
+                        validateExclusiveMode(isDirectoryMode, isGenerationMode, "file");
+                        inputPath = getNextArgument(args, ++i, "file");
                         validateFileExists(inputPath);
-                        isFileMode = true; // Imposta flag modalità per controlli successivi
+                        isFileMode = true;
                     }
 
                     // Input da directory per batch processing
                     case DIR_PARAM -> {
-                        // Previene il conflitto con modalità file
-                        if (isFileMode) {
-                            throw new IllegalArgumentException("Non è possibile usare sia -f che -d");
-                        }
-                        // Ottiene il path e verifica esistenza directory
-                        inputPath = getNextArgument(args, i++, "directory");
+                        validateExclusiveMode(isFileMode, isGenerationMode, "directory");
+                        inputPath = getNextArgument(args, ++i, "directory");
                         validateDirectoryExists(inputPath);
-                        isDirectoryMode = true; // Imposta flag modalità per controlli successivi
+                        isDirectoryMode = true;
                     }
 
                     // Specifica la directory personalizzata per i risultati
                     case OUTPUT_PARAM -> {
-                        // Ottiene il path e assicura directory utilizzabile
-                        outputPath = getNextArgument(args, i++, "directory output");
-                        validateOrCreateOutputDirectory(outputPath); // Crea se non esiste
+                        outputPath = getNextArgument(args, ++i, "directory output");
+                        validateOrCreateOutputDirectory(outputPath);
                     }
 
                     // Imposta limite temporale per risoluzione
                     case TIMEOUT_PARAM -> {
-                        // Converte stringa in int e verifica range
-                        timeoutSeconds = parseAndValidateTimeout(args, i++);
+                        timeoutSeconds = parseAndValidateTimeout(args, ++i);
                     }
 
                     // Opzioni aggiuntive e parametri sconosciuti
                     default -> {
                         // Parsing parametri -opt con flags multiple
                         if (args[i].startsWith(OPT_PARAM)) {
-                            // Rimuove prefisso -opt e processa caratteri flags
                             String optValue = args[i].substring(OPT_PARAM.length());
                             OptimizationFlags flags = parseOptionalFlags(optValue);
-
-                            // Imposta i flags booleani dalle flags parsate
-                            useTseitin = flags.tseitin;             // 't': Conversione CNF via Tseitin
-                            useSubsumption = flags.subsumption;     // 's': Eliminazione subsumption
-                            useRestart = flags.restart;             // 'r': Tecnica di reinizio
-                        } else {
-                            // Rifiuta gli argomenti non riconosciuti
+                            useTseitin = flags.tseitin;
+                            useSubsumption = flags.subsumption;
+                            useRestart = flags.restart;
+                        }
+                        // Parsing parametri -gen per generazione istanze
+                        else if (args[i].startsWith(GEN_PARAM)) {
+                            validateExclusiveMode(isFileMode, isDirectoryMode, "generazione");
+                            GenerationConfig genConfig = parseGenerationParameters(args, i);
+                            generationType = genConfig.type;
+                            generationCount = genConfig.count;
+                            isGenerationMode = true;
+                            i = genConfig.nextIndex; // Salta parametri consumati
+                        }
+                        else {
                             throw new IllegalArgumentException("Parametro sconosciuto: " + args[i]);
                         }
                     }
                 }
             }
 
+            // Validazione finale configurazione
+            return validateAndBuildFinalConfiguration(inputPath, outputPath, isFileMode, isDirectoryMode,
+                    isGenerationMode, timeoutSeconds, useTseitin, useSubsumption, useRestart,
+                    generationType, generationCount);
+        }
+
+        /**
+         * Valida che le modalità operative siano mutualmente esclusive.
+         */
+        private void validateExclusiveMode(boolean mode1, boolean mode2, String currentMode) {
+            if (mode1 || mode2) {
+                throw new IllegalArgumentException("Modalità " + currentMode +
+                        " non può essere combinata con altre modalità (file/directory/generazione sono mutualmente esclusive)");
+            }
+        }
+
+        /**
+         * Parsa parametri per generazione istanze.
+         */
+        private GenerationConfig parseGenerationParameters(String[] args, int currentIndex) {
+            String genParam = args[currentIndex];
+            String genType = genParam.substring(GEN_PARAM.length());
+
+            // Valida tipo generazione
+            if (!GEN_PIGEONHOLE.equals(genType)) {
+                throw new IllegalArgumentException("Tipo generazione non supportato: " + genType +
+                        ". Supportati: " + GEN_PIGEONHOLE);
+            }
+
+            // Ottiene numero istanze
+            if (currentIndex + 1 >= args.length) {
+                throw new IllegalArgumentException("Parametro -gen=" + genType + " richiede numero istanze");
+            }
+
+            int count;
+            try {
+                count = Integer.parseInt(args[currentIndex + 1]);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Numero istanze non valido: " + args[currentIndex + 1]);
+            }
+
+            // Valida range numero istanze
+            if (count < MIN_PIGEONHOLE_INSTANCES || count > MAX_PIGEONHOLE_INSTANCES) {
+                throw new IllegalArgumentException("Numero istanze deve essere tra " +
+                        MIN_PIGEONHOLE_INSTANCES + " e " + MAX_PIGEONHOLE_INSTANCES + ", ricevuto: " + count);
+            }
+
+            return new GenerationConfig(genType, count, currentIndex + 1);
+        }
+
+        /**
+         * Valida configurazione finale e costruisce oggetto risultato.
+         */
+        private SolverConfiguration validateAndBuildFinalConfiguration(String inputPath, String outputPath,
+                                                                       boolean isFileMode, boolean isDirectoryMode, boolean isGenerationMode, int timeoutSeconds,
+                                                                       boolean useTseitin, boolean useSubsumption, boolean useRestart,
+                                                                       String generationType, int generationCount) {
+
+            // Per modalità generazione, inputPath e timeout non sono necessari
+            if (isGenerationMode) {
+                if (outputPath == null) {
+                    throw new IllegalArgumentException("Modalità generazione richiede directory output (-o)");
+                }
+                return new SolverConfiguration(null, outputPath, false, 0, false, false, false,
+                        true, generationType, generationCount);
+            }
+
+            // Per modalità risoluzione SAT, inputPath è obbligatorio
             if (inputPath == null) {
                 throw new IllegalArgumentException("Specificare input con -f (file) o -d (directory)");
             }
 
             return new SolverConfiguration(inputPath, outputPath, isFileMode, timeoutSeconds,
-                    useTseitin, useSubsumption, useRestart);
+                    useTseitin, useSubsumption, useRestart, false, null, 0);
         }
 
         /**
          * Verifica che esista effettivamente un argomento successivo nell'array prima
          * di restituirlo, prevenendo IndexOutOfBoundsException durante il parsing.
-         *
-         * UTILIZZO TIPICO:
-         * -f <file>: currentIndex punta a "-f", restituisce <file>
-         * -o <dir>: currentIndex punta a "-o", restituisce <dir>
-         * -t <sec>: currentIndex punta a "-t", restituisce <sec>
-         *
-         * @param args array completo degli argomenti da command line
-         * @param currentIndex indice del parametro corrente (es. posizione di "-f")
-         * @param argumentType descrizione human-readable del tipo di valore atteso (per errori)
-         * @return valore stringa dell'argomento successivo (es. path del file)
-         * @throws IllegalArgumentException se non c'è un argomento successivo disponibile
          */
         private String getNextArgument(String[] args, int currentIndex, String argumentType) {
-            // Verifica che esista un argomento successivo nell'array
-            // Previene IndexOutOfBoundsException e fornisce errore descrittivo all'utente
-            if (currentIndex + 1 >= args.length) {
-                // Comunica quale parametro ha fallito e cosa si aspettava
-                throw new IllegalArgumentException("Parametro " + args[currentIndex] +
+            if (currentIndex >= args.length) {
+                throw new IllegalArgumentException("Parametro " + args[currentIndex - 1] +
                         " richiede " + argumentType);
             }
-
-            // Accesso all'elemento successivo dopo validazione bounds
-            // currentIndex punta al flag (es. "-f"), currentIndex + 1 punta al valore (es. "input.cnf")
-            return args[currentIndex + 1];
+            return args[currentIndex];
         }
 
         /**
          * Estrae il valore del timeout dalla command line, lo converte da stringa a intero
          * e applica validazioni di range per garantire un valore utilizzabile dal solver.
-         *
-         * VALIDAZIONI APPLICATE:
-         * - Conversione stringa -> intero (gestione NumberFormatException)
-         * - Range minimo: timeout >= MIN_TIMEOUT_SECONDS (previene valori inutilizzabili)
-         * - Nessun limite massimo (problemi molto complessi possono richiedere ore)
-         *
-         * @param args array completo argomenti command line
-         * @param currentIndex posizione del flag "-t" nell'array
-         * @return valore timeout validato in secondi, pronto per uso nel solver
-         * @throws IllegalArgumentException se valore non parsabile o fuori range valido
          */
         private int parseAndValidateTimeout(String[] args, int currentIndex) {
-            // Ottiene la stringa si timeout dall'argomento successivo a "-t"
-            // Delega a getNextArgument() la validazione bounds dell'array
             String timeoutStr = getNextArgument(args, currentIndex, "numero secondi");
 
             try {
-                // Parsing stringa -> intero con gestione eccezioni
                 int timeout = Integer.parseInt(timeoutStr);
-
-                // Verifica che timeout sia utilizzabile praticamente
-                // MIN_TIMEOUT_SECONDS previene valori troppo bassi che causerebbero timeout immediati
                 if (timeout < MIN_TIMEOUT_SECONDS) {
                     throw new IllegalArgumentException("Timeout minimo: " + MIN_TIMEOUT_SECONDS + " secondi");
                 }
-
                 return timeout;
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("Valore timeout non valido: " + timeoutStr);
@@ -1397,69 +1547,35 @@ public final class Main {
         /**
          * Analizza la stringa di flags passata al parametro -opt e converte ogni carattere
          * in una configurazione booleana specifica per le opzioni aggiuntive del solver CDCL.
-         *
-         * FORMATO SUPPORTATO:
-         * • -opt=<flags>: Combinazione caratteri individuali (es: -opt=tr, -opt=s, -opt=sr)
-         * • -opt=all: attiva tutte le ottimizzazioni disponibili
-         * • -opt="": Stringa vuota non consentita (errore esplicito)
-         *
-         * FLAGS DISPONIBILI:
-         * 't': Tseitin encoding per conversione in E-CNF
-         * 's': Sussunzione per le clausole sovrainsieme
-         * 'r': Tecnica del reinizio per prevenzione stalli di ricerca
-         *
-         * @param flagsStr stringa contenente caratteri flags dopo prefisso -opt
-         * @return OptimizationFlags con configurazione booleana per ogni opzione aggiuntiva
-         * @throws IllegalArgumentException se stringa vuota o null (configurazione ambigua)
          */
         private OptimizationFlags parseOptionalFlags(String flagsStr) {
-            // Null o empty string non hanno semantica chiara per ottimizzazioni
             if (flagsStr == null || flagsStr.trim().isEmpty()) {
                 throw new IllegalArgumentException("Valore -opt vuoto");
             }
 
-            // Gestione del caso speciale "all" per l'attivazione totale
             if (flagsStr.equals(OPT_ALL)) {
-                // Attiva tutte le ottimizzazioni disponibili: Tseitin + Subsumption + Restart
                 return new OptimizationFlags(true, true, true);
             }
 
-            // 't': Abilita conversione Tseitin per realizzare formule E-CNF
             boolean tseitin = flagsStr.contains(OPT_TSEITIN);
-
-            // 's': Abilita la sussunzione per riduzione spazio ricerca
             boolean subsumption = flagsStr.contains(OPT_SUBSUMPTION);
-
-            // 'r': Abilita tecnica di reinizio
             boolean restart = flagsStr.contains(OPT_RESTART);
 
-            // OptimizationFlags incapsula la configurazione booleana in oggetto type-safe
             return new OptimizationFlags(tseitin, subsumption, restart);
         }
 
         /**
          * Esegue i controlli completi su un file specificato dall'utente per garantire che
-         * il solver possa accedervi e processarlo. Applica validazioni progressive da
-         * esistenza fisica fino ai permessi di lettura effettivi.
-         *
-         * @param filePath path assoluto o relativo del file da validare
-         * @throws IllegalArgumentException se file non accessibile con messaggio specifico dell'errore
+         * il solver possa accedervi e processarlo.
          */
         private void validateFileExists(String filePath) {
-            // Ottiene la rappresentazione filesystem del path specificato
             File file = new File(filePath);
-
-            // Verifica che il path corrisponda a un elemento reale nel filesystem
             if (!file.exists()) {
                 throw new IllegalArgumentException("File non esistente: " + filePath);
             }
-
-            // Assicura che il path punti a un file regolare, non directory/symlink
             if (!file.isFile()) {
                 throw new IllegalArgumentException("Non è un file: " + filePath);
             }
-
-            // Verifica che il processo corrente possa leggere il contenuto
             if (!file.canRead()) {
                 throw new IllegalArgumentException("File non leggibile: " + filePath);
             }
@@ -1498,6 +1614,11 @@ public final class Main {
      * Flag di ottimizzazione parsed dalla linea di comando.
      */
     private record OptimizationFlags(boolean tseitin, boolean subsumption, boolean restart) {}
+
+    /**
+     * Configurazione per generazione istanze.
+     */
+    private record GenerationConfig(String type, int count, int nextIndex) {}
 
     /**
      * Risultato elaborazione batch con statistiche.

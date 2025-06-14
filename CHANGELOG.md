@@ -5,6 +5,16 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.9.0] - 2025-06-15
+### Added
+- Aggiunta la possibilità di generare istanze del problema **Pigeonhole**
+  tramite riga di comando con la flag:
+
+  _-gen=pigeonhole [numero] -o [directory]_
+- Le istanze vengono salvate in formato `.txt` all’interno di una cartella `PIGEONHOLE`
+  creata automaticamente nella directory di output.
+
+
 ## [1.8.8] - 2025-06-14
 ### Refactored
 - Refactoring generale del codice per migliorarne la documentazione interna
