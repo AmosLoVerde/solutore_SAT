@@ -263,15 +263,23 @@ public class CDCLSolver {
         this.statistics = new SATStatistics();
 
         try {
+            // Inizia il timer per CDCL
+            statistics.startCDCLTimer();
+
             // Esecuzione algoritmo CDCL completo
             CDCLExecutionResult executionResult = executeCDCLMainAlgorithm();
+
+            // Si stoppa il timer per CDCL
+            statistics.stopTimer();
 
             // Generazione risultato finale
             return generateFinalResult(executionResult);
 
         } catch (InterruptedException e) {
+            statistics.stopTimer();
             return handleInterruption();
         } catch (Exception e) {
+            statistics.stopTimer();
             return handleCriticalError(e);
         }
     }
@@ -282,34 +290,6 @@ public class CDCLSolver {
     public void interrupt() {
         this.interrupted = true;
         LOGGER.info("Richiesta interruzione controllata ricevuta");
-    }
-
-    /**
-     * Restituisce statistiche parziali durante esecuzione.
-     */
-    public SATStatistics getPartialStatistics() {
-        SATStatistics partialStats = new SATStatistics();
-
-        // Copia contatori correnti senza modificare gli originali
-        int currentDecisions = decisionCount;
-        int currentConflicts = conflictCount;
-        int currentRestarts = (restartTechnique != null) ? restartTechnique.getTotalRestarts() : 0;
-
-        // Replica le statistiche senza usare loop che modificherebbero i contatori
-        for (int i = 0; i < currentDecisions; i++) {
-            partialStats.incrementDecisions();
-        }
-        for (int i = 0; i < currentConflicts; i++) {
-            partialStats.incrementConflicts();
-        }
-        for (int i = 0; i < currentRestarts; i++) {
-            partialStats.incrementRestarts();
-        }
-
-        // Copia altre statistiche
-        partialStats.setProofSize(proofGenerator.getStepCount());
-
-        return partialStats;
     }
 
     //endregion

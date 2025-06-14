@@ -103,8 +103,18 @@ public class SATStatistics {
      * Avvia immediatamente la misurazione del tempo di esecuzione.
      */
     public SATStatistics() {
-        this.startTime = System.currentTimeMillis();
+        //this.startTime = System.currentTimeMillis();
+        this.startTime = 0;
         this.timerStopped = false;
+    }
+
+    /**
+     * Metodo per l'avvio esplicito timer CDCL
+     */
+    public void startCDCLTimer() {
+        if (startTime == 0 && !timerStopped) {
+            this.startTime = System.currentTimeMillis();
+        }
     }
 
     //endregion
@@ -250,11 +260,17 @@ public class SATStatistics {
      * @return tempo di esecuzione in ms (corrente o finale)
      */
     public long getExecutionTimeMs() {
+        if (startTime == 0) {
+            return 0; // Timer mai avviato
+        }
+
         if (!timerStopped && startTime > 0) {
             // Timer ancora attivo: calcola tempo parziale
             return System.currentTimeMillis() - startTime;
         }
+
         return executionTimeMs;
+
     }
 
     /**

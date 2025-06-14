@@ -945,7 +945,6 @@ public final class Main {
             writer.write("Restart: " + stats.getRestarts() + "\n");
         }
 
-        // TODO: considerare solo la risoluzione CDCL???
         // Include parsing, conversione CNF, risoluzione CDCL, generazione output
         writer.write("Tempo impiegato: " + stats.getExecutionTimeMs() + " ms\n");
 
