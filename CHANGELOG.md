@@ -5,6 +5,14 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.8.8] - 2025-06-14
+### Refactored
+- Refactoring generale del codice per migliorarne la documentazione interna
+  e la leggibilità.
+- Aggiornati i commenti nelle principali classi per rendere il comportamento
+  del sistema più comprensibile.
+
+
 ## [1.8.7] - 2025-06-14
 ### Fixed
 - Corretto il conteggio del tempo dedicato esclusivamente all'esecuzione del modulo CDCL.

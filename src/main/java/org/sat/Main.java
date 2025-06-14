@@ -51,12 +51,9 @@ import java.util.logging.Logger;
  * - STATS/: Statistiche dettagliate suddivise per tipologia ottimizzazione
  *
  * @author Amos Lo Verde
- * @version 1.8.5
+ * @version 1.8.8
  */
 public final class Main {
-
-    private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
-
     //region CONFIGURAZIONE PARAMETRI APPLICAZIONE
 
     /**
@@ -109,7 +106,6 @@ public final class Main {
      * @param args parametri linea di comando forniti dall'utente
      */
     public static void main(String[] args) {
-        // LOGGER.info("---> AVVIO SOLUTORE SAT CDCL <---");
         System.out.println("---> AVVIO SOLUTORE SAT CDCL <---");
 
         try {
@@ -130,7 +126,6 @@ public final class Main {
         } catch (Exception e) {
             handleGlobalError(e);
         } finally {
-            // LOGGER.info("---> FINE ESECUZIONE SOLUTORE SAT <---");
             System.out.println("---> FINE ESECUZIONE SOLUTORE SAT <---");
         }
     }
@@ -145,12 +140,10 @@ public final class Main {
      */
     private static void executeMainPipeline(SolverConfiguration config) {
         if (config.isFileMode) {
-            //LOGGER.info("[i] Modalità: Elaborazione file singolo");
             System.out.println("[I] Modalità: Elaborazione file singolo");
             // Processatore del file singolo
             processSingleFile(config);
         } else {
-            //LOGGER.info("[i] Modalità: Elaborazione della directory");
             System.out.println("[I] Modalità: Elaborazione della directory");
             // Processatore dei file interni alla directory
             processDirectoryBatch(config);
@@ -166,7 +159,6 @@ public final class Main {
      * @param e eccezione critica che ha causato il fallimento
      */
     private static void handleGlobalError(Exception e) {
-        //LOGGER.log(Level.SEVERE, "Errore critico nell'applicazione", e);
         System.out.println("[E] Errore critico nell'applicazione: " + e.getMessage());
         System.out.println("Controllare i log per dettagli completi.");
         System.exit(1);
@@ -192,7 +184,6 @@ public final class Main {
             // Ritorna il parser degli argomenti
             return parser.parse(args);
         } catch (IllegalArgumentException e) {
-            // LOGGER.warning("Errore nella validazione dei parametri: " + e.getMessage());
             System.out.println("[E] Errore nella validazione dei parametri:: " + e.getMessage());
             System.out.println("Usa -h per visualizzare l'help completo.");
             return null;
@@ -342,11 +333,9 @@ public final class Main {
             return future.get(config.timeoutSeconds, TimeUnit.SECONDS);
 
         } catch (TimeoutException e) {
-            // LOGGER.warning("Timeout raggiunto dopo " + config.timeoutSeconds + " secondi");
             System.out.println("[W] Timeout raggiunto dopo " + config.timeoutSeconds + " secondi");
             return null;
         } catch (Exception e) {
-            // LOGGER.log(Level.SEVERE, "Errore durante risoluzione SAT", e);
             System.out.println("[E] Errore durante risoluzione SAT: " + e);
             throw new RuntimeException("Errore nella risoluzione SAT", e);
         } finally {
@@ -368,7 +357,6 @@ public final class Main {
     private static String readFormulaFromFile(String filePath) throws IOException {
         System.out.println("Lettura formula logica...");
         String content = Files.readString(Path.of(filePath)).trim();
-        //LOGGER.info("Formula letta: " + content);
         System.out.println("[I] Formula letta: " + content);
         return content;
     }
@@ -400,7 +388,6 @@ public final class Main {
         CNFConverter cnfFormula = formula.toCNF();
         String cnfString = cnfFormula.toString();
 
-        // LOGGER.info("Formula CNF generata: " + cnfString);
         System.out.println("[I] Formula CNF generata: " + cnfString);
         return new CNFConversionResult(cnfFormula, cnfString);
     }
@@ -421,7 +408,6 @@ public final class Main {
         String ecnfString = ecnfFormula.toString();
         String conversionInfo = tseitinConverter.getConversionInfo();
 
-        // LOGGER.info("Formula E-CNF generata: " + ecnfString);
         System.out.println("[I] Formula E-CNF generata: " + ecnfString);
         return new TseitinConversionResult(ecnfFormula, ecnfString, conversionInfo);
     }
@@ -441,9 +427,7 @@ public final class Main {
         CNFConverter optimizedFormula = subsumptionOptimizer.applySubsumption(formula);
         String optimizationInfo = subsumptionOptimizer.getOptimizationInfo();
 
-        //LOGGER.info("Formula ottimizzata: " + optimizedFormula.toString());
         System.out.println("[I] Formula ottimizzata: " + optimizedFormula.toString());
-        //LOGGER.info("Clausole eliminate: " + subsumptionOptimizer.getEliminatedClausesCount());
         System.out.println("[I] Clausole eliminate: " + subsumptionOptimizer.getEliminatedClausesCount());
 
         return new SubsumptionResult(optimizedFormula, optimizationInfo);
@@ -462,7 +446,6 @@ public final class Main {
      * @param config configurazione con directory input e opzioni
      */
     private static void processDirectoryBatch(SolverConfiguration config) {
-        //LOGGER.info("Inizio elaborazione directory: " + config.inputPath);
         System.out.println("[I] Inizio elaborazione directory: " + config.inputPath);
 
         if (!validateInputDirectory(config.inputPath)) return;
@@ -479,7 +462,6 @@ public final class Main {
             displayBatchSummary(batchResult);
 
         } catch (IOException e) {
-            //LOGGER.log(Level.SEVERE, "Errore accesso directory", e);
             System.out.println("[E] Errore durante l'accesso alla directory: " + e.getMessage());
         }
     }
@@ -534,7 +516,6 @@ public final class Main {
                 result.incrementSuccess();
 
             } catch (Exception e) {
-                //LOGGER.log(Level.WARNING, "Errore file: " + file.getName(), e);
                 System.out.println("[E] Errore nel file " + file.getName() + ": " + e);
                 result.incrementError();
             }
@@ -614,7 +595,6 @@ public final class Main {
             writer.write(content);
         }
 
-        //LOGGER.info("Formula " + dirName + " salvata: " + outputFilePath);
         System.out.println("[I] Formula " + dirName + " salvata: " + outputFilePath);
     }
 
@@ -640,7 +620,6 @@ public final class Main {
             writer.write(statsContent);
         }
 
-        //LOGGER.info("Statistiche " + optimizationType + " salvate: " + statsFilePath);
         System.out.println("[I] Statistiche " + optimizationType + " salvate: " + statsFilePath);
     }
 
@@ -673,7 +652,6 @@ public final class Main {
                 }
             }
 
-            //LOGGER.info("File opzioni attive salvato: " + optionsFilePath);
             System.out.println("[I] File opzioni attive salvato: " + optionsFilePath);
         }
     }
@@ -721,7 +699,6 @@ public final class Main {
      * @param e eccezione verificatasi
      */
     private static void handleFileProcessingError(String filePath, Exception e) {
-        //LOGGER.log(Level.SEVERE, "Errore elaborazione file: " + filePath, e);
         System.out.println("[E] Errore elaborazione del file '" + filePath + "': " + e.getMessage());
     }
 
@@ -747,7 +724,6 @@ public final class Main {
             writeStructuredResult(writer, satResult, formulaResult, config);
         }
 
-        //LOGGER.info("Risultati salvati: " + resultFilePath);
         System.out.println("[I] Risultati salvati: " + resultFilePath);
     }
 
@@ -827,7 +803,6 @@ public final class Main {
                             writer.write(variableName + " = " + variableValue + "\n");
 
                         } catch (IOException e) {
-                            //LOGGER.warning("Errore scrittura singola variabile modello: " + e.getMessage());
                             System.out.println("[E] Errore scrittura singola variabile modello: " + e.getMessage());
                         }
                     });
@@ -835,7 +810,6 @@ public final class Main {
         } else {
             // Risultato SAT senza modello disponibile (non dovrebbe essere possibile)
             writer.write("Errore: modello non disponibile\n");
-            //LOGGER.severe("Inconsistenza: risultato SAT senza modello disponibile");
             System.out.println("[E] Inconsistenza: risultato SAT senza modello disponibile.");
         }
     }
@@ -868,7 +842,6 @@ public final class Main {
                 writer.write("\n\nLa clausola vuota [] conclude la dimostrazione.\n");
 
                 // Segnala che la prova è potenzialmente incompleta
-                //LOGGER.fine("Prova UNSAT senza clausola vuota esplicita nel testo finale");
                 System.out.println("[W] Prova UNSAT senza clausola vuota esplicita nel testo finale");
             }
 
@@ -880,7 +853,6 @@ public final class Main {
             // - Interruzione prematura dell'algoritmo
             writer.write("Prova non disponibile.\n");
 
-            //LOGGER.warning("Risultato UNSAT generato senza prova matematica disponibile");
             System.out.println("[W] Risultato UNSAT generato senza prova matematica disponibile");
         }
     }
@@ -1030,7 +1002,6 @@ public final class Main {
             }
         }
 
-        //LOGGER.info("Statistiche restart salvate: " + statsFilePath);
         System.out.println("Statistiche restart salvate: " + statsFilePath);
     }
 
