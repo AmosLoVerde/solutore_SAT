@@ -53,7 +53,7 @@ import java.util.concurrent.*;
  * - PIGEONHOLE/: Istanze generate del Pigeonhole Problem (se si attiva -gen=pigeonhole)
  *
  * @author Amos Lo Verde
- * @version 1.9.0
+ * @version 1.9.1
  */
 public final class Main {
     //region CONFIGURAZIONE PARAMETRI APPLICAZIONE

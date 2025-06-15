@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.9.1] - 2025-06-15
+### Fixed
+- Corretto il funzionamento dell'analisi dei conflitti nel solver CDCL.
+- Il sistema gestisce ora correttamente anche i casi limite,
+  garantendo maggiore robustezza e affidabilità.
+
+
 ## [1.9.0] - 2025-06-15
 ### Added
 - Aggiunta la possibilità di generare istanze del problema **Pigeonhole**

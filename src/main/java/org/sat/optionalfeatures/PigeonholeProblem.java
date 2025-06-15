@@ -14,7 +14,7 @@ import java.util.logging.Level;
  * GENERATORE PIGEONHOLE PROBLEM - Sistema per generazione automatica istanze
  *
  * Implementa la generazione automatica di istanze del classico "Pigeonhole Problem"
- * per testing e benchmarking di solutori SAT. Il problema codifica la impossibilità
+ * per testing e benchmarking di solutori SAT. Il problema codifica l'impossibilità
  * matematica di inserire n+1 piccioni in n buche quando ogni buco può contenere
  * al più un piccione.
  *
@@ -23,12 +23,11 @@ import java.util.logging.Level;
  * - Vincoli positivi: ogni piccione deve essere in almeno una buca
  * - Vincoli negativi: ogni buca può contenere al più un piccione
  *
- * CARATTERISTICHE GENERATE:
+ * CARATTERISTICHE:
  * - Tutte le istanze sono UNSAT per costruzione matematica
- * - Complessità crescente con n (utile per benchmark performance)
+ * - Complessità crescente con n (utile per i benchmark di performance)
  * - Formato compatibile con parser del solutore SAT
  * - Output organizzato in directory strutturata
- *
  */
 public class PigeonholeProblem {
 
@@ -316,9 +315,7 @@ public class PigeonholeProblem {
     }
 
     /**
-     * Genera vincoli negativi: ogni buca può contenere al più un piccione.
-     *
-     * ∀j ∈ [1,n], ∀(i,h) ∈ C²_n+1: (¬p_ij ∨ ¬p_hj)
+     * Genera i vincoli negativi: ogni buca può contenere al più un piccione.
      *
      * @param formula contenitore formula da popolare
      * @param n dimensione problema
@@ -441,7 +438,6 @@ public class PigeonholeProblem {
 
     /**
      * Calcola numero di clausole per problema dimensione n.
-     * Formula: (n+1) + C(n+1,2) × n = (n+1) + n×(n+1)×n/2
      */
     private int calculateClausesForDimension(int n) {
         int positiveConstraints = n + 1;                    // Una per ogni piccione
@@ -451,7 +447,6 @@ public class PigeonholeProblem {
 
     /**
      * Calcola numero di variabili per problema dimensione n.
-     * Formula: (n+1) × n variabili p_ij
      */
     private int calculateVariablesForDimension(int n) {
         return (n + 1) * n;
