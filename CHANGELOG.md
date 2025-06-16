@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.9.2] - 2025-06-17
+### Refactored
+- Sistemati e aggiornati alcuni commenti nel codice per migliorarne la leggibilità.
+- Corretto il formato di alcuni messaggi di output durante l’esecuzione,
+  rendendoli più chiari e coerenti.
+
+
 ## [1.9.1] - 2025-06-15
 ### Fixed
 - Corretto il funzionamento dell'analisi dei conflitti nel solver CDCL.

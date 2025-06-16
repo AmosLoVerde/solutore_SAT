@@ -67,15 +67,6 @@ public class CDCLSolver {
     /** Numero totale di decisioni euristiche prese */
     private int decisionCount = 0;
 
-    /** Numero di spiegazioni generate (conflict analysis - può essere > conflictCount) */
-    private int explanationCount = 0;
-
-    /** Numero di clausole effettivamente apprese (dopo deduplicazione) */
-    private int learnedClausesCount = 0;
-
-    /** Numero di reset del tracking anti-loop (quando tutte le variabili sono state tentate) */
-    private int antiLoopResetCount = 0;
-
     /** Statistiche dettagliate per ogni singola decisione euristica */
     private final List<DecisionStatistics> decisionStatisticsList = new ArrayList<>();
 
@@ -627,7 +618,6 @@ public class CDCLSolver {
 
         // Genera la clausola di spiegazione tramite risoluzione
         List<Integer> explanationClause = generateExplanation(conflictClause, justifyingClause);
-        explanationCount++;
         statistics.incrementExplanations();
         updateCurrentDecisionStats(stats -> stats.explanations++);
 
@@ -671,7 +661,6 @@ public class CDCLSolver {
             }
 
             // Aggiorna statistiche per risoluzione aggiuntiva
-            explanationCount++;
             statistics.incrementExplanations();
             updateCurrentDecisionStats(stats -> stats.explanations++);
         }
@@ -708,7 +697,6 @@ public class CDCLSolver {
 
             // Genera nuova spiegazione risolvendo il conflitto
             List<Integer> newExplanation = generateExplanation(currentClause, conflictingClauseOnLevel);
-            explanationCount++;
             statistics.incrementExplanations();
             updateCurrentDecisionStats(stats -> stats.explanations++);
 
@@ -1162,7 +1150,6 @@ public class CDCLSolver {
             learnClauseIfNovel(learnedClause);                          // Aggiunge solo se non duplicata
 
             // Aggiorna le statistiche di apprendimento
-            learnedClausesCount++;
             statistics.incrementLearnedClauses();
             updateCurrentDecisionStats(stats -> stats.learnedClauses++);
         }
@@ -1317,7 +1304,6 @@ public class CDCLSolver {
      */
     private void resetAntiLoopTracking() {
         alreadyChosenVariables.clear();                                // Azzera tracking variabili provate
-        antiLoopResetCount = 0;                                        // Azzera il contatore
     }
 
     //endregion
@@ -1356,7 +1342,6 @@ public class CDCLSolver {
 
         // Azzeramento del tracking per nuovo ciclo
         alreadyChosenVariables.clear();                               // Azzera il tracking variabili provate
-        antiLoopResetCount++;                                         // Conta il reset per statistiche
 
         return findFirstUnassignedVariable();                         // Riprova dalla prima disponibile
     }

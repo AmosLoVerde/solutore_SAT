@@ -1046,10 +1046,10 @@ public final class Main {
      * una sottodirectory dedicata per facilitare l'analisi delle performance.
      *
      * CONTENUTO REPORT GENERATO:
-     * • Numero restart eseguiti vs soglia configurata (5 conflitti)
-     * • Conflitti totali rilevati durante l'intera esecuzione
-     * • Media conflitti per restart (efficacia della strategia)
-     * • Valutazione qualitativa dell'uso della tecnica
+     * - Numero restart eseguiti vs soglia configurata (5 conflitti)
+     * - Conflitti totali rilevati durante l'intera esecuzione
+     * - Media conflitti per restart (efficacia della strategia)
+     * - Valutazione qualitativa dell'uso della tecnica
      *
      * STRUTTURA FILE OUTPUT:
      * STATS/RESTART/nomeFile.stats - Report dedicato restart per questo problema
@@ -1288,13 +1288,13 @@ public final class Main {
         System.out.println("  PIGEONHOLE/   Istanze generate del Pigeonhole Problem\n");
 
         System.out.println("NOTE OPERATIVE:");
-        System.out.println("  • Formule supportate: AND(&), OR(|), NOT(!), IMPLIES(->), IFF(<->)");
-        System.out.println("  • Le modalità risoluzione SAT e generazione istanze sono mutualmente esclusive");
-        System.out.println("  • Tseitin raccomandato per formule con >8 operatori");
-        System.out.println("  • Restart efficace su problemi con pattern di stallo");
-        System.out.println("  • Timeout minimo 5s per evitare interruzioni premature");
-        System.out.println("  • Batch elabora automaticamente tutti i .txt della directory");
-        System.out.println("  • Pigeonhole Problem genera istanze UNSAT per testing\n");
+        System.out.println("  - Formule supportate: AND(&), OR(|), NOT(!), IMPLIES(->), IFF(<->)");
+        System.out.println("  - Le modalità risoluzione SAT e generazione istanze sono mutualmente esclusive");
+        System.out.println("  - Tseitin raccomandato per formule con >8 operatori");
+        System.out.println("  - Restart efficace su problemi con pattern di stallo");
+        System.out.println("  - Timeout minimo 5s per evitare interruzioni premature");
+        System.out.println("  - Batch elabora automaticamente tutti i .txt della directory");
+        System.out.println("  - Pigeonhole Problem genera istanze UNSAT per testing\n");
 
         System.out.println("===============================================\n");
     }
@@ -1658,3 +1658,4 @@ public final class Main {
 
     //endregion
 }
+

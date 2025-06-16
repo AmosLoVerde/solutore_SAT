@@ -11,23 +11,23 @@ import java.util.logging.Logger;
  * di backtracking cronologico e non-cronologico con efficienza ottimale.
  *
  * ORGANIZZAZIONE GERARCHICA:
- * • Livello 0: implicazioni da clausole unitarie originali (sempre presente)
- * • Livello i (i>0): livello di decisione i con decisione + implicazioni derivate
- * • Ogni livello mantiene cronologia completa degli assegnamenti
- * • Stack mai completamente vuoto per garantire stabilità
+ * - Livello 0: implicazioni da clausole unitarie originali (sempre presente)
+ * - Livello i (i>0): livello di decisione i con decisione + implicazioni derivate
+ * - Ogni livello mantiene cronologia completa degli assegnamenti
+ * - Stack mai completamente vuoto per garantire stabilità
  *
  * OPERAZIONI SUPPORTATE:
- * • Aggiunta decisioni euristiche con creazione nuovi livelli
- * • Aggiunta implicazioni al livello corrente
- * • Backtracking cronologico (rimozione livello superiore)
- * • Backjumping non-cronologico (salto a livelli specifici)
- * • Interrogazione stato e navigazione livelli
+ * - Aggiunta decisioni euristiche con creazione nuovi livelli
+ * - Aggiunta implicazioni al livello corrente
+ * - Backtracking cronologico (rimozione livello superiore)
+ * - Backjumping non-cronologico (salto a livelli specifici)
+ * - Interrogazione stato e navigazione livelli
  *
  * INVARIANTI MANTENUTE:
- * • Stack contiene sempre almeno livello 0
- * • Ogni livello ha struttura temporale consistente
- * • Operazioni atomiche per consistenza durante backtracking
- * • Validazione completa di tutti i parametri
+ * - Stack contiene sempre almeno livello 0
+ * - Ogni livello ha struttura temporale consistente
+ * - Operazioni atomiche per consistenza durante backtracking
+ * - Validazione completa di tutti i parametri
  */
 public class DecisionStack {
 
@@ -39,14 +39,14 @@ public class DecisionStack {
      * Stack dei livelli di decisione con organizzazione gerarchica ottimizzata.
      *
      * STRUTTURA DETTAGLIATA:
-     * • Indice 0: livello 0 (implicazioni iniziali, sempre presente)
-     * • Indice i>0: livello i di decisione con cronologia temporale
-     * • Ogni livello è ArrayList<AssignedLiteral> con assegnamenti ordinati cronologicamente
+     * - Indice 0: livello 0 (implicazioni iniziali, sempre presente)
+     * - Indice i>0: livello i di decisione con cronologia temporale
+     * - Ogni livello è ArrayList<AssignedLiteral> con assegnamenti ordinati cronologicamente
      *
      * INVARIANTI CRITICHE:
-     * • size() >= 1 (livello 0 sempre presente, mai rimosso)
-     * • Ogni livello non null e con struttura valida
-     * • Ordine cronologico mantenuto all'interno di ogni livello
+     * - size() >= 1 (livello 0 sempre presente, mai rimosso)
+     * - Ogni livello non null e con struttura valida
+     * - Ordine cronologico mantenuto all'interno di ogni livello
      */
     private final Stack<ArrayList<AssignedLiteral>> levelStack;
 
@@ -180,10 +180,10 @@ public class DecisionStack {
      * Rimuove livello più alto (backtracking cronologico singolo).
      *
      * PROTEZIONI IMPLEMENTATE:
-     * • Livello 0 è protetto e non può mai essere rimosso
-     * • Operazione atomica per garantire consistenza durante concorrenza
-     * • Restituisce copia difensiva degli assegnamenti rimossi
-     * • Logging dettagliato per audit delle operazioni
+     * - Livello 0 è protetto e non può mai essere rimosso
+     * - Operazione atomica per garantire consistenza durante concorrenza
+     * - Restituisce copia difensiva degli assegnamenti rimossi
+     * - Logging dettagliato per audit delle operazioni
      *
      * @return lista assegnamenti del livello rimosso (vuota se tentativo rimozione livello 0)
      */
