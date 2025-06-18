@@ -1,0 +1,12 @@
+=== RISOLUZIONE SAT ===
+File originale: uuf75-011.cnf
+Timeout: 600 secondi
+
+Opzioni aggiuntive: Tseitin
+
+==================================================
+
+RISULTATO: TIMEOUT
+La risoluzione ha superato il limite di tempo.
+
+Aumentare il timeout (-t) per problemi complessi.
