@@ -10,8 +10,11 @@ import org.sat.cdcl.SATResult;
 import org.sat.cdcl.SATStatistics;
 import org.sat.cnf.CNFConverter;
 import org.sat.cnf.LogicFormulaParser;
+import org.sat.optionalfeatures.PigeonholeProblem;
+import org.sat.optionalfeatures.StandardConverterCNF;
 import org.sat.optionalfeatures.SubsumptionPrinciple;
 import org.sat.optionalfeatures.TseitinConverter;
+import org.sat.support.CNFFormula;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -21,37 +24,40 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.logging.Logger;
 
 /**
  * SOLUTORE SAT CDCL (Conflict-Driven Clause Learning)
  *
  * PIPELINE DI ELABORAZIONE COMPLETA:
- * 1. INPUT: Formula logica da file di testo
- * 2. PARSING: Conversione notazione infissa -> albero sintattico (ANTLR)
+ * 1. INPUT: Formula logica da file di testo o file CNF standard
+ * 2. PARSING: Conversione notazione infissa -> albero sintattico (ANTLR) o parsing CNF diretto
  * 3. CONVERSIONE IN CNF: Trasformazione in Forma Normale Congiuntiva standard
  * 4. OPZIONI FACOLTATIVE:
  *    - Tseitin: Conversione E-CNF equisoddisfacibile
  *    - Sussunzione: Eliminazione clausole ridondanti (sovrainsieme)
  *    - Reinizio: Reinizio periodico a ogni 5 conflitti + sussunzione automatica
+ *    - Convert: Modalità diretta per file già in formato CNF
  * 5. RISOLUZIONE SAT: Si utilizza l'algoritmo CDCL + euristiche VSIDS
  * 6. OUTPUT: Risultati strutturati, prove UNSAT, statistiche performance
  *
  * MODALITÀ OPERATIVE SUPPORTATE:
- * - File singolo (-f): Elaborazione fi un singolo file .txt
- * - Directory batch (-d): Elaborazione automatica di tutti i file .txt in una cartella
+ * - File singolo (-f): Elaborazione di un singolo file .txt o .cnf
+ * - Directory batch (-d): Elaborazione automatica di tutti i file .txt/.cnf in una cartella
  * - Configurazione opzioni tramite flag (-opt=<flag>, -opt=all)
  * - Timeout configurabile per evitare elaborazioni troppo dispendiose (-t secondi)
  * - Output directory personalizzabile per organizzazione risultati (-o directory)
+ * - Generazione istanze Pigeonhole Problem (-gen=pigeonhole <numero>)
+ * - Conversione diretta CNF (-convert per file .cnf)
  *
  * ORGANIZZAZIONE DEGLI OUTPUT STRUTTURATI:
- * - CNF/: Formule convertite in Forma Normale Congiuntiva
+ * - CNF/: Formule convertite in Forma Normale Congiuntiva (non creata in modalità -convert)
  * - E-CNF/: Formule Tseitin equisoddisfacibili (se si attiva -opt=t)
  * - RESULT/: Risultati SAT/UNSAT con modelli e prove matematiche
  * - STATS/: Statistiche dettagliate suddivise per tipologia ottimizzazione
+ * - PIGEONHOLE/: Istanze generate del Pigeonhole Problem (se si attiva -gen=pigeonhole)
  *
  * @author Amos Lo Verde
- * @version 1.8.8
+ * @version 1.10.1
  */
 public final class Main {
     //region CONFIGURAZIONE PARAMETRI APPLICAZIONE
@@ -65,6 +71,8 @@ public final class Main {
     private static final String OUTPUT_PARAM = "-o";
     private static final String TIMEOUT_PARAM = "-t";
     private static final String OPT_PARAM = "-opt=";
+    private static final String GEN_PARAM = "-gen=";
+    private static final String CONVERT_PARAM = "-convert";
 
     /**
      * Flag ottimizzazioni disponibili
@@ -75,10 +83,21 @@ public final class Main {
     private static final String OPT_ALL = "all";
 
     /**
+     * Flag generazione problemi disponibili
+     * */
+    private static final String GEN_PIGEONHOLE = "pigeonhole";
+
+    /**
      * Configurazioni timeout di default e limiti
      * */
     private static final int DEFAULT_TIMEOUT_SECONDS = 10;
     private static final int MIN_TIMEOUT_SECONDS = 5;
+
+    /**
+     * Limiti per generazione istanze
+     * */
+    private static final int MIN_PIGEONHOLE_INSTANCES = 1;
+    private static final int MAX_PIGEONHOLE_INSTANCES = 100;
 
     /**
      * Previene istanziazione - classe utility
@@ -100,7 +119,7 @@ public final class Main {
      * FLUSSO ESECUZIONE:
      * 1. Parsing e validazione parametri linea di comando
      * 2. Configurazione ambiente di esecuzione (timeout, ottimizzazioni)
-     * 3. Utilizzo della modalità appropriata (file singolo oppure directory)
+     * 3. Utilizzo della modalità appropriata (file singolo, directory, generazione, o conversione)
      * 4. Gestione errori globali e pulizia finale delle risorse
      *
      * @param args parametri linea di comando forniti dall'utente
@@ -133,13 +152,25 @@ public final class Main {
     /**
      * Esegue la pipeline principale di elaborazione basata sulla configurazione.
      *
-     * Determina automaticamente la modalità operativa (file singolo oppure directory)
+     * Determina automaticamente la modalità operativa (file singolo, directory, conversione, o generazione)
      * e delega all'handler appropriato per l'esecuzione specializzata.
      *
      * @param config configurazione validata contenente tutti i parametri
      */
     private static void executeMainPipeline(SolverConfiguration config) {
-        if (config.isFileMode) {
+        if (config.isGenerationMode) {
+            System.out.println("[I] Modalità: Generazione istanze " + config.generationType);
+            // Processatore generazione istanze
+            processInstanceGeneration(config);
+        } else if (config.isConvertMode) {
+            System.out.println("[I] Modalità: Conversione diretta CNF");
+            // Processatore conversione diretta CNF
+            if (config.isFileMode) {
+                processConvertSingleFile(config);
+            } else {
+                processConvertDirectoryBatch(config);
+            }
+        } else if (config.isFileMode) {
             System.out.println("[I] Modalità: Elaborazione file singolo");
             // Processatore del file singolo
             processSingleFile(config);
@@ -197,14 +228,30 @@ public final class Main {
      */
     private static void displayConfigurationSummary(SolverConfiguration config) {
         System.out.println("\n-->> CONFIGURAZIONE SOLUTORE SAT <<--");
-        System.out.println("Modalità: " + (config.isFileMode ? "File singolo" : "Directory"));
-        System.out.println("Input: " + config.inputPath);
-        System.out.println("Output: " + (config.outputPath != null ? config.outputPath : "Directory input"));
-        System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
 
-        // Mostra le opzioni aggiuntive: tseitin, sussunzione, reinizio
-        List<String> activeOpts = buildActiveOptimizationsList(config);
-        System.out.println("Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        if (config.isGenerationMode) {
+            System.out.println("Modalità: Generazione istanze " + config.generationType);
+            System.out.println("Numero istanze: " + config.generationCount);
+        } else if (config.isConvertMode) {
+            System.out.println("Modalità: Conversione diretta CNF");
+            System.out.println("Input: " + config.inputPath);
+            System.out.println("Formato: File .cnf");
+            System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
+
+            // Mostra le opzioni aggiuntive: tseitin, sussunzione, reinizio
+            List<String> activeOpts = buildActiveOptimizationsList(config);
+            System.out.println("Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        } else {
+            System.out.println("Modalità: " + (config.isFileMode ? "File singolo" : "Directory"));
+            System.out.println("Input: " + config.inputPath);
+            System.out.println("Timeout: " + config.timeoutSeconds + " secondi");
+
+            // Mostra le opzioni aggiuntive: tseitin, sussunzione, reinizio
+            List<String> activeOpts = buildActiveOptimizationsList(config);
+            System.out.println("Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        }
+
+        System.out.println("Output: " + (config.outputPath != null ? config.outputPath : "Directory input"));
         System.out.println("====================================\n");
     }
 
@@ -220,6 +267,264 @@ public final class Main {
         if (config.useSubsumption) activeOpts.add("Sussunzione");
         if (config.useRestart) activeOpts.add("Restart");
         return activeOpts;
+    }
+
+    //endregion
+
+    //region GENERAZIONE ISTANZE
+
+    /**
+     * Processa richiesta di generazione istanze per problemi specifici.
+     *
+     * @param config configurazione contenente tipo generazione e parametri
+     */
+    private static void processInstanceGeneration(SolverConfiguration config) {
+        System.out.println("-->> GENERAZIONE ISTANZE <<--");
+        System.out.println("Tipo: " + config.generationType);
+        System.out.println("Numero istanze: " + config.generationCount);
+        System.out.println("=========================\n");
+
+        try {
+            switch (config.generationType) {
+                case GEN_PIGEONHOLE -> {
+                    generatePigeonholeInstances(config);
+                }
+                default -> {
+                    throw new IllegalArgumentException("Tipo generazione non supportato: " + config.generationType);
+                }
+            }
+
+            System.out.println("[I] Generazione istanze completata con successo!");
+
+        } catch (Exception e) {
+            handleGenerationError(config.generationType, e);
+        }
+    }
+
+    /**
+     * Genera istanze del Pigeonhole Problem utilizzando il generatore dedicato.
+     *
+     * @param config configurazione con parametri generazione
+     */
+    private static void generatePigeonholeInstances(SolverConfiguration config) {
+        System.out.println("Generazione " + config.generationCount + " istanze Pigeonhole Problem...");
+
+        // Inizializza generatore
+        PigeonholeProblem generator = new PigeonholeProblem();
+
+        // Configura directory output
+        String outputDir = config.outputPath != null ? config.outputPath : ".";
+        generator.setOutputDirectory(outputDir);
+
+        // Genera istanze
+        generator.generateInstances(config.generationCount);
+
+        // Mostra report finale
+        System.out.println("\n[I] Report generazione:");
+        System.out.println("Istanze create: " + generator.getGeneratedInstancesCount());
+        System.out.println("Directory output: " + generator.getOutputDirectory());
+    }
+
+    /**
+     * Gestisce errori durante generazione istanze.
+     *
+     * @param generationType tipo di generazione che ha causato errore
+     * @param e eccezione verificatasi
+     */
+    private static void handleGenerationError(String generationType, Exception e) {
+        System.out.println("[E] Errore durante generazione istanze " + generationType + ": " + e.getMessage());
+        throw new RuntimeException("Generazione istanze fallita", e);
+    }
+
+    //endregion
+
+    //region ELABORAZIONE CONVERSIONE DIRETTA CNF
+
+    /**
+     * Elabora un singolo file CNF attraverso conversione diretta.
+     *
+     * @param config configurazione contenente path file e opzioni
+     */
+    private static void processConvertSingleFile(SolverConfiguration config) {
+        System.out.println("-->> ELABORAZIONE FILE CNF <<--");
+        System.out.println("File: " + Paths.get(config.inputPath).getFileName());
+        System.out.println("==============================\n");
+
+        try {
+            // Verifica estensione .cnf
+            if (!config.inputPath.toLowerCase().endsWith(".cnf")) {
+                throw new IllegalArgumentException("Modalità -convert richiede file con estensione .cnf, ricevuto: " + config.inputPath);
+            }
+
+            // FASE 1: Conversione diretta da formato CNF a CNFConverter
+            CNFConverter cnfFormula = executeDirectCNFConversion(config.inputPath);
+
+            // FASE 2: Applicazione opzioni facoltative (Tseitin, Sussunzione)
+            FormulaProcessingResult formulaResult = applyOptionalFeaturesToCNF(cnfFormula, config);
+
+            // FASE 3: Risoluzione SAT con timeout
+            SATResult satResult = executeSATSolvingWithTimeout(formulaResult.finalFormula, config);
+
+            // FASE 4: Gestione risultato e output
+            if (satResult == null) {
+                handleTimeoutResult(config);
+            } else {
+                handleSuccessfulResult(satResult, formulaResult, config);
+            }
+
+        } catch (Exception e) {
+            handleFileProcessingError(config.inputPath, e);
+        }
+    }
+
+    /**
+     * Elabora tutti i file .cnf in una directory con conversione diretta.
+     *
+     * @param config configurazione con directory input e opzioni
+     */
+    private static void processConvertDirectoryBatch(SolverConfiguration config) {
+        System.out.println("[I] Inizio elaborazione directory CNF: " + config.inputPath);
+
+        if (!validateInputDirectory(config.inputPath)) return;
+
+        try {
+            // Cerca tutti i file .cnf
+            List<File> cnfFiles = findAllCnfFiles(config.inputPath);
+            if (cnfFiles.isEmpty()) {
+                System.out.println("[W] Nessun file .cnf trovato nella directory specificata.");
+                return;
+            }
+
+            BatchResult batchResult = executeConvertBatchProcessing(cnfFiles, config);
+            displayBatchSummary(batchResult);
+
+        } catch (IOException e) {
+            System.out.println("[E] Errore durante l'accesso alla directory: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Trova tutti i file .cnf nella directory specificata.
+     *
+     * @param dirPath directory da scansionare
+     * @return lista ordinata di file .cnf trovati
+     * @throws IOException se errori di accesso alla directory
+     */
+    private static List<File> findAllCnfFiles(String dirPath) throws IOException {
+        System.out.println("Ricerca file .cnf nella directory...");
+
+        List<File> cnfFiles = Files.list(Paths.get(dirPath))
+                .filter(path -> path.toString().toLowerCase().endsWith(".cnf"))
+                .map(Path::toFile)
+                .sorted(Comparator.comparing(File::getName))
+                .toList();
+
+        System.out.println("Trovati " + cnfFiles.size() + " file .cnf da elaborare.");
+        return cnfFiles;
+    }
+
+    /**
+     * Esegue l'elaborazione sequenziale dei file CNF con gestione degli errori isolata.
+     *
+     * @param files lista file da elaborare
+     * @param config configurazione di base
+     * @return risultati aggregati del batch
+     */
+    private static BatchResult executeConvertBatchProcessing(List<File> files, SolverConfiguration config) {
+        BatchResult result = new BatchResult(files.size());
+
+        System.out.println("Configurazione batch CNF:");
+        System.out.println("- Timeout per file: " + config.timeoutSeconds + " secondi");
+        List<String> activeOpts = buildActiveOptimizationsList(config);
+        System.out.println("- Opzioni aggiuntive: " + (activeOpts.isEmpty() ? "Nessuna" : String.join(", ", activeOpts)));
+        System.out.println();
+
+        // Scorre ciascun file nella lista di tutti i file .cnf da elaborare
+        for (File file : files) {
+            try {
+                System.out.println("Elaborazione: " + file.getName());
+
+                // Crea configurazione specifica per questo file con modalità convert
+                SolverConfiguration fileConfig = createConvertFileConfiguration(file, config);
+                processConvertSingleFile(fileConfig);
+                result.incrementSuccess();
+
+            } catch (Exception e) {
+                System.out.println("[E] Errore nel file " + file.getName() + ": " + e);
+                result.incrementError();
+            }
+            System.out.println(); // Separatore visivo
+        }
+
+        return result;
+    }
+
+    /**
+     * Esegue conversione diretta da file CNF standard a CNFConverter.
+     *
+     * @param filePath percorso del file .cnf da convertire
+     * @return CNFConverter risultante dalla conversione
+     * @throws Exception se errori durante conversione
+     */
+    private static CNFConverter executeDirectCNFConversion(String filePath) throws Exception {
+        System.out.println("Conversione diretta da formato CNF standard...");
+
+        // Utilizza StandardConverterCNF per la conversione
+        StandardConverterCNF converter = new StandardConverterCNF();
+        CNFConverter result = converter.convertFromStandardCNF(filePath);
+
+        if (result.toString().length() > 100) {
+            System.out.println("[I] La formula CNF convertita è troppo lunga per essere mostrata qui a schermo.");
+        } else {
+            System.out.println("[I] Formula CNF convertita: " + result.toString());
+        }
+        return result;
+    }
+
+    /**
+     * Applica opzioni facoltative a una formula già in CNF.
+     *
+     * @param cnfFormula formula CNF di base
+     * @param config configurazione con opzioni attive
+     * @return risultato con formula finale e metadata
+     * @throws Exception se errori durante applicazione opzioni
+     */
+    private static FormulaProcessingResult applyOptionalFeaturesToCNF(CNFConverter cnfFormula, SolverConfiguration config) throws Exception {
+        CNFFormula initialFormula = new CNFFormula(cnfFormula);
+        int initialClausesCount = initialFormula.getClausesCount();
+        int initialVariablesCount = initialFormula.getVariableCount();
+
+        CNFConverter finalFormula = cnfFormula;
+        StringBuilder conversionInfo = new StringBuilder();
+        boolean isECNF = false;
+
+        // Step 1: Applicazione Tseitin (opzionale)
+        if (config.useTseitin) {
+            System.out.println("Applicazione trasformazione Tseitin...");
+            TseitinConversionResult tseitinResult = applyTseitinTransformation(new CNFConversionResult(cnfFormula, cnfFormula.toString()));
+            finalFormula = tseitinResult.ecnfFormula;
+            conversionInfo.append(tseitinResult.conversionInfo);
+            isECNF = true;
+
+            // Salva il risultato E-CNF
+            saveFormulaToFile(tseitinResult.ecnfString, config, "E-CNF", ".ecnf");
+            saveOptimizationStats(tseitinResult.conversionInfo, config, "TSEITIN");
+        }
+
+        // Step 2: Applicazione Sussunzione (opzionale)
+        if (config.useSubsumption) {
+            System.out.println("Applicazione principio di sussunzione...");
+            SubsumptionResult subsumptionResult = applySubsumptionOptimization(finalFormula);
+            finalFormula = subsumptionResult.optimizedFormula;
+            conversionInfo.append(subsumptionResult.optimizationInfo);
+
+            saveOptimizationStats(subsumptionResult.optimizationInfo, config, "SUBSUMPTION");
+        }
+
+        // Step 3: Salvataggio opzioni attive
+        saveActiveOptionsFile(config);
+
+        return new FormulaProcessingResult(finalFormula, conversionInfo.toString(), isECNF, initialClausesCount, initialVariablesCount);
     }
 
     //endregion
@@ -274,6 +579,11 @@ public final class Main {
         // Step 1: Lettura e conversione CNF base
         String formulaText = readFormulaFromFile(config.inputPath);
         CNFConversionResult cnfResult = convertFormulaToCNF(formulaText);
+
+        CNFFormula initialFormula = new CNFFormula(cnfResult.cnfFormula);
+        int initialClausesCount = initialFormula.getClausesCount();
+        int initialVariablesCount = initialFormula.getVariableCount();
+
         // Scrive la formula appena trasformata nel formato .cnf dentro la cartella CNF
         saveFormulaToFile(cnfResult.cnfString, config, "CNF", ".cnf");
 
@@ -307,7 +617,7 @@ public final class Main {
         // Step 4: Salvataggio opzioni attive
         saveActiveOptionsFile(config);
 
-        return new FormulaProcessingResult(finalFormula, conversionInfo.toString(), isECNF);
+        return new FormulaProcessingResult(finalFormula, conversionInfo.toString(), isECNF, initialClausesCount, initialVariablesCount);
     }
 
     /**
@@ -556,7 +866,7 @@ public final class Main {
      */
     private static void displayBatchSummary(BatchResult result) {
         System.out.println("\n-->> RIEPILOGO ELABORAZIONE DIRECTORY <<--");
-        System.out.println("File .txt trovati: " + result.totalFiles);
+        System.out.println("File elaborati trovati: " + result.totalFiles);
         System.out.println("File elaborati con successo: " + result.successCount);
         System.out.println("File con errori: " + result.errorCount);
 
@@ -742,7 +1052,13 @@ public final class Main {
         // Header del report
         writer.write("=== RISOLUZIONE SAT ===\n");
         writer.write("File originale: " + Paths.get(config.inputPath).getFileName() + "\n");
-        writer.write("File CNF: " + getBaseFileName(config.inputPath) + ".cnf\n");
+
+        // Modalità specifica per convert (non genera file CNF)
+        if (!config.isConvertMode) {
+            writer.write("File CNF: " + getBaseFileName(config.inputPath) + ".cnf\n");
+        } else {
+            writer.write("Modalità: Conversione diretta CNF\n");
+        }
 
         // Specifica se si sta eseguendo SAT sulla formula E-CNF oppure CNF
         if (config.useTseitin) {
@@ -769,7 +1085,7 @@ public final class Main {
 
         // Statistiche finali
         writer.write("\n" + "=".repeat(50) + "\n\n");
-        writeExecutionStatistics(writer, satResult);
+        writeExecutionStatistics(writer, satResult, formulaResult);
     }
 
     /**
@@ -833,7 +1149,13 @@ public final class Main {
             // La prova è già formattata dal ProofGenerator:
             // <clausola di conflitto> ~ <clausola giustificante> => <clausola di spiegazione>
             String mathematicalProof = satResult.getProof();
-            writer.write(mathematicalProof);
+
+            // Se la prova è troppo grande è meglio non stamparla nel file .result
+            if (mathematicalProof.length() > 500) {
+                writer.write("La prova è troppo lunga per essere riportata.\n");
+            } else {
+                writer.write(mathematicalProof);
+            }
 
             // Controlla la presenza della clausola vuota finale
             boolean hasEmptyClauseInProof = mathematicalProof.toLowerCase().contains("[]");
@@ -880,7 +1202,7 @@ public final class Main {
      * @param satResult risultato completo contenente statistiche di esecuzione
      * @throws IOException se errori durante scrittura su file system
      */
-    private static void writeExecutionStatistics(FileWriter writer, SATResult satResult) throws IOException {
+    private static void writeExecutionStatistics(FileWriter writer, SATResult satResult, FormulaProcessingResult formulaResult) throws IOException {
         // Estrae tutte le metriche raccolte durante CDCL
         var stats = satResult.getStatistics();
 
@@ -905,6 +1227,8 @@ public final class Main {
 
         // STATISTICHE TOTALI
         writer.write("\n=== STATISTICHE TOTALI ===\n");
+        writer.write("Clausole iniziali: " + formulaResult.initialClausesCount() + "\n");
+        writer.write("Variabili iniziali: " + formulaResult.initialVariablesCount() + "\n");
         writer.write("Decisioni totali: " + stats.getDecisions() + "\n");
         writer.write("Propagazioni totali: " + stats.getPropagations() + "\n");
         writer.write("Conflitti totali: " + stats.getConflicts() + "\n");
@@ -914,7 +1238,7 @@ public final class Main {
         // Reinizio (opzionale)
         if (stats.getRestarts() >= 0) {
             // Restart eseguiti
-            writer.write("Restart: " + stats.getRestarts() + "\n");
+            writer.write("Reinizio: " + stats.getRestarts() + "\n");
         }
 
         // Include parsing, conversione CNF, risoluzione CDCL, generazione output
@@ -924,21 +1248,26 @@ public final class Main {
         if (stats.hasDecisionBreakdown() || true) {
             writer.write("\n=== STATISTICHE PER DECISIONE ===\n");
 
-            writer.write(String.format("- PRE #1-decisione: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
-                    stats.getPropagations() - totalPropagations,
-                    stats.getConflicts() - totalConflicts,
-                    stats.getExplanations() - totalExplanations,
-                    stats.getLearnedClauses() - totalLearnedClauses));
+            // Evita di riportare i dettagli delle singole decisioni se sono più di 30
+            if (stats.getDecisions() > 30) {
+                writer.write("Il numero di decisioni è troppo grande per riportare qui ogni dettaglio di ciascuna decisione.");
+            } else {
+                writer.write(String.format("- PRE #1-decisione: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                        stats.getPropagations() - totalPropagations,
+                        stats.getConflicts() - totalConflicts,
+                        stats.getExplanations() - totalExplanations,
+                        stats.getLearnedClauses() - totalLearnedClauses));
 
-            List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
+                List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
 
-            for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
-                writer.write(String.format("- Decisione #%d: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
-                        breakdown.decisionNumber,
-                        breakdown.propagations,
-                        breakdown.conflicts,
-                        breakdown.explanations,
-                        breakdown.learnedClauses));
+                for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
+                    writer.write(String.format("- Decisione #%d: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                            breakdown.decisionNumber,
+                            breakdown.propagations,
+                            breakdown.conflicts,
+                            breakdown.explanations,
+                            breakdown.learnedClauses));
+                }
             }
         } else {
             writer.write("\n=== STATISTICHE PER DECISIONE ===\n");
@@ -954,10 +1283,10 @@ public final class Main {
      * una sottodirectory dedicata per facilitare l'analisi delle performance.
      *
      * CONTENUTO REPORT GENERATO:
-     * • Numero restart eseguiti vs soglia configurata (5 conflitti)
-     * • Conflitti totali rilevati durante l'intera esecuzione
-     * • Media conflitti per restart (efficacia della strategia)
-     * • Valutazione qualitativa dell'uso della tecnica
+     * - Numero restart eseguiti vs soglia configurata (5 conflitti)
+     * - Conflitti totali rilevati durante l'intera esecuzione
+     * - Media conflitti per restart (efficacia della strategia)
+     * - Valutazione qualitativa dell'uso della tecnica
      *
      * STRUTTURA FILE OUTPUT:
      * STATS/RESTART/nomeFile.stats - Report dedicato restart per questo problema
@@ -1126,7 +1455,34 @@ public final class Main {
                 baseConfig.timeoutSeconds,
                 baseConfig.useTseitin,
                 baseConfig.useSubsumption,
-                baseConfig.useRestart
+                baseConfig.useRestart,
+                false, // non modalità generazione
+                null,  // nessun tipo generazione
+                0,     // nessun conteggio generazione
+                false  // non modalità convert
+        );
+    }
+
+    /**
+     * Crea configurazione specifica per un file CNF nel batch convert.
+     *
+     * @param file file da elaborare
+     * @param baseConfig configurazione base del batch
+     * @return configurazione specifica per il file con modalità convert
+     */
+    private static SolverConfiguration createConvertFileConfiguration(File file, SolverConfiguration baseConfig) {
+        return new SolverConfiguration(
+                file.getAbsolutePath(),
+                baseConfig.outputPath,
+                true, // modalità file
+                baseConfig.timeoutSeconds,
+                baseConfig.useTseitin,
+                baseConfig.useSubsumption,
+                baseConfig.useRestart,
+                false, // non modalità generazione
+                null,  // nessun tipo generazione
+                0,     // nessun conteggio generazione
+                true   // modalità convert
         );
     }
 
@@ -1148,12 +1504,27 @@ public final class Main {
         System.out.println("UTILIZZO:");
         System.out.println("  java -jar solutore_SAT.jar [opzioni]\n");
 
-        System.out.println("OPZIONI PRINCIPALI:");
-        System.out.println("  -f <file>       Elabora un singolo file .txt");
-        System.out.println("  -d <directory>  Elabora tutti i file .txt in una directory");
-        System.out.println("  -o <directory>  Directory di output (default: stessa di input)");
-        System.out.println("  -t <secondi>    Timeout per formula (min: 5, default: 10)");
-        System.out.println("  -h              Mostra questa guida\n");
+        System.out.println("MODALITÀ OPERATIVE:");
+        System.out.println("  1. RISOLUZIONE SAT:");
+        System.out.println("     -f <file>       Elabora un singolo file .txt");
+        System.out.println("     -d <directory>  Elabora tutti i file .txt in una directory");
+        System.out.println("     -o <directory>  Directory di output (default: stessa di input)");
+        System.out.println("     -t <secondi>    Timeout per formula (min: 5, default: 10)");
+        System.out.println("     -opt=<flags>    Ottimizzazioni (s=sussunzione, t=tseitin, r=restart, all=tutte)");
+        System.out.println();
+        System.out.println("  2. CONVERSIONE DIRETTA CNF:");
+        System.out.println("     -f <file.cnf> -convert    Elabora un singolo file .cnf in formato standard");
+        System.out.println("     -d <directory> -convert   Elabora tutti i file .cnf in una directory");
+        System.out.println("     -o <directory>            Directory output per risultati");
+        System.out.println("     -t <secondi>              Timeout per formula");
+        System.out.println("     -opt=<flags>              Ottimizzazioni (s=sussunzione, t=tseitin, r=restart)");
+        System.out.println();
+        System.out.println("  3. GENERAZIONE ISTANZE:");
+        System.out.println("     -gen=pigeonhole <numero>  Genera istanze Pigeonhole Problem (1-100)");
+        System.out.println("     -o <directory>           Directory output per istanze generate");
+        System.out.println();
+        System.out.println("  4. AIUTO:");
+        System.out.println("     -h              Mostra questa guida\n");
 
         System.out.println("OTTIMIZZAZIONI DISPONIBILI (-opt=<flags>):");
         System.out.println("  s = Sussunzione      (elimina clausole ridondanti)");
@@ -1161,31 +1532,52 @@ public final class Main {
         System.out.println("  r = Restart         (reinizio periodico con sussunzione)");
         System.out.println("  all = Tutte le ottimizzazioni disponibili\n");
 
+        System.out.println("FORMATO CNF STANDARD (-convert):");
+        System.out.println("  Ogni riga: <letterali separati da spazi> 0");
+        System.out.println("  Letterali positivi: numeri positivi (1, 2, 3, ...)");
+        System.out.println("  Letterali negativi: numeri negativi (-1, -2, -3, ...)");
+        System.out.println("  Terminatore riga: 0");
+        System.out.println("  Righe di commento/header: ignorate automaticamente\n");
+
         System.out.println("ESEMPI DI UTILIZZO:");
-        System.out.println("  # File singolo base");
+        System.out.println("  # Risoluzione SAT - File singolo base");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt\n");
 
-        System.out.println("  # Con opzioni aggiuntive restart e sussunzione");
+        System.out.println("  # Risoluzione SAT - Con opzioni aggiuntive restart e sussunzione");
         System.out.println("  java -jar solutore_SAT.jar -f formula.txt -opt=sr\n");
 
-        System.out.println("  # Directory con tutte le opzioni aggiuntive");
+        System.out.println("  # Risoluzione SAT - Directory con tutte le opzioni aggiuntive");
         System.out.println("  java -jar solutore_SAT.jar -d ./problemi/ -opt=all -t 60\n");
 
-        System.out.println("  # Output personalizzato");
+        System.out.println("  # Conversione diretta CNF - File singolo");
+        System.out.println("  java -jar solutore_SAT.jar -f problema.cnf -convert\n");
+
+        System.out.println("  # Conversione diretta CNF - Directory con ottimizzazioni");
+        System.out.println("  java -jar solutore_SAT.jar -d ./cnf_files/ -convert -opt=sr -t 30\n");
+
+        System.out.println("  # Generazione istanze Pigeonhole Problem");
+        System.out.println("  java -jar solutore_SAT.jar -gen=pigeonhole 15 -o ./output/\n");
+
+        System.out.println("  # Risoluzione SAT - Output personalizzato");
         System.out.println("  java -jar solutore_SAT.jar -d ./input/ -o ./output/ -opt=t\n");
 
         System.out.println("OUTPUT GENERATO:");
-        System.out.println("  CNF/        Formula convertite in Forma Normale Congiuntiva");
-        System.out.println("  E-CNF/      Formula Tseitin equisoddisfacibili (con -opt=t)");
-        System.out.println("  RESULT/     Risultati SAT/UNSAT con modelli e prove");
-        System.out.println("  STATS/      Statistiche dettagliate per tipo ottimizzazione\n");
+        System.out.println("  CNF/          Formula convertite in Forma Normale Congiuntiva (non in modalità -convert)");
+        System.out.println("  E-CNF/        Formula Tseitin equisoddisfacibili (con -opt=t)");
+        System.out.println("  RESULT/       Risultati SAT/UNSAT con modelli e prove");
+        System.out.println("  STATS/        Statistiche dettagliate per tipo ottimizzazione");
+        System.out.println("  PIGEONHOLE/   Istanze generate del Pigeonhole Problem\n");
 
         System.out.println("NOTE OPERATIVE:");
-        System.out.println("  • Formule supportate: AND(&), OR(|), NOT(!), IMPLIES(->), IFF(<->)");
-        System.out.println("  • Tseitin raccomandato per formule con >8 operatori");
-        System.out.println("  • Restart efficace su problemi con pattern di stallo");
-        System.out.println("  • Timeout minimo 5s per evitare interruzioni premature");
-        System.out.println("  • Batch elabora automaticamente tutti i .txt della directory\n");
+        System.out.println("  - Formule .txt: AND(&), OR(|), NOT(!), IMPLIES(->), IFF(<->)");
+        System.out.println("  - File .cnf: Formato DIMACS standard con terminatori 0");
+        System.out.println("  - Modalità -convert: Solo file .cnf, genera variabili p1, p2, ...");
+        System.out.println("  - Le modalità risoluzione SAT e generazione istanze sono mutualmente esclusive");
+        System.out.println("  - Tseitin raccomandato per formule con >8 operatori");
+        System.out.println("  - Restart efficace su problemi con pattern di stallo");
+        System.out.println("  - Timeout minimo 5s per evitare interruzioni premature");
+        System.out.println("  - Batch elabora automaticamente tutti i file della directory");
+        System.out.println("  - Pigeonhole Problem genera istanze UNSAT per testing\n");
 
         System.out.println("===============================================\n");
     }
@@ -1208,9 +1600,15 @@ public final class Main {
         final boolean useTseitin;
         final boolean useSubsumption;
         final boolean useRestart;
+        final boolean isGenerationMode;
+        final String generationType;
+        final int generationCount;
+        final boolean isConvertMode;
 
         SolverConfiguration(String inputPath, String outputPath, boolean isFileMode,
-                            int timeoutSeconds, boolean useTseitin, boolean useSubsumption, boolean useRestart) {
+                            int timeoutSeconds, boolean useTseitin, boolean useSubsumption, boolean useRestart,
+                            boolean isGenerationMode, String generationType, int generationCount,
+                            boolean isConvertMode) {
             this.inputPath = inputPath;
             this.outputPath = outputPath;
             this.isFileMode = isFileMode;
@@ -1218,6 +1616,10 @@ public final class Main {
             this.useTseitin = useTseitin;
             this.useSubsumption = useSubsumption;
             this.useRestart = useRestart;
+            this.isGenerationMode = isGenerationMode;
+            this.generationType = generationType;
+            this.generationCount = generationCount;
+            this.isConvertMode = isConvertMode;
         }
     }
 
@@ -1235,11 +1637,13 @@ public final class Main {
          *
          * PARAMETRI SUPPORTATI:
          * -h: Mostra help e termina
-         * -f <file>: Input file singolo (esclusivo con -d)
-         * -d <dir>: Input directory per batch (esclusivo con -f)
+         * -f <file>: Input file singolo (esclusivo con -d e -gen)
+         * -d <dir>: Input directory per batch (esclusivo con -f e -gen)
+         * -gen=<tipo> <numero>: Generazione istanze (esclusivo con -f e -d)
          * -o <dir>: Directory output personalizzata
          * -t <sec>: Timeout in secondi per singola risoluzione
          * -opt=<flags>: Ottimizzazioni (t=Tseitin, s=Subsumption, r=Restart)
+         * -convert: Modalità conversione diretta CNF (richiede -f o -d)
          *
          * @param args parametri da linea comando forniti dall'utente
          * @return configurazione solver validata e pronta per l'uso (null se help richiesto)
@@ -1251,9 +1655,13 @@ public final class Main {
             String outputPath = null;
             boolean isFileMode = false;                     // Flag per modalità file singolo (-f)
             boolean isDirectoryMode = false;                // Flag per modalità directory (-d)
+            boolean isGenerationMode = false;               // Flag per modalità generazione (-gen)
+            boolean isConvertMode = false;                  // Flag per modalità conversione (-convert)
             boolean useTseitin = false;                     // Opzione di conversione in E-CNF via Tseitin
             boolean useSubsumption = false;                 // Opzione di eliminazione clausole soprainsieme
             boolean useRestart = false;                     // Opzione di reinizio
+            String generationType = null;                   // Tipo di generazione (pigeonhole, ...)
+            int generationCount = 0;                        // Numero istanze da generare
             int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;   // Timeout default se non specificato
 
             // Processa sequenzialmente ogni argomento della command line
@@ -1265,129 +1673,179 @@ public final class Main {
                         return null; // Segnala al chiamante di terminare
                     }
 
-                    // Input da file singolo (mutualmente esclusivo con directory)
+                    // Input da file singolo (mutualmente esclusivo con directory e generazione)
                     case FILE_PARAM -> {
-                        // Previene il conflitto con modalità directory
-                        if (isDirectoryMode) {
-                            throw new IllegalArgumentException("Non è possibile usare sia -f che -d");
-                        }
-                        // Ottiene il path e verifica esistenza file
-                        inputPath = getNextArgument(args, i++, "file");
+                        validateExclusiveMode(isDirectoryMode, isGenerationMode, "file");
+                        inputPath = getNextArgument(args, ++i, "file");
                         validateFileExists(inputPath);
-                        isFileMode = true; // Imposta flag modalità per controlli successivi
+                        isFileMode = true;
                     }
 
                     // Input da directory per batch processing
                     case DIR_PARAM -> {
-                        // Previene il conflitto con modalità file
-                        if (isFileMode) {
-                            throw new IllegalArgumentException("Non è possibile usare sia -f che -d");
-                        }
-                        // Ottiene il path e verifica esistenza directory
-                        inputPath = getNextArgument(args, i++, "directory");
+                        validateExclusiveMode(isFileMode, isGenerationMode, "directory");
+                        inputPath = getNextArgument(args, ++i, "directory");
                         validateDirectoryExists(inputPath);
-                        isDirectoryMode = true; // Imposta flag modalità per controlli successivi
+                        isDirectoryMode = true;
                     }
 
                     // Specifica la directory personalizzata per i risultati
                     case OUTPUT_PARAM -> {
-                        // Ottiene il path e assicura directory utilizzabile
-                        outputPath = getNextArgument(args, i++, "directory output");
-                        validateOrCreateOutputDirectory(outputPath); // Crea se non esiste
+                        outputPath = getNextArgument(args, ++i, "directory output");
+                        validateOrCreateOutputDirectory(outputPath);
                     }
 
                     // Imposta limite temporale per risoluzione
                     case TIMEOUT_PARAM -> {
-                        // Converte stringa in int e verifica range
-                        timeoutSeconds = parseAndValidateTimeout(args, i++);
+                        timeoutSeconds = parseAndValidateTimeout(args, ++i);
+                    }
+
+                    // Modalità conversione diretta CNF
+                    case CONVERT_PARAM -> {
+                        isConvertMode = true;
                     }
 
                     // Opzioni aggiuntive e parametri sconosciuti
                     default -> {
                         // Parsing parametri -opt con flags multiple
                         if (args[i].startsWith(OPT_PARAM)) {
-                            // Rimuove prefisso -opt e processa caratteri flags
                             String optValue = args[i].substring(OPT_PARAM.length());
                             OptimizationFlags flags = parseOptionalFlags(optValue);
-
-                            // Imposta i flags booleani dalle flags parsate
-                            useTseitin = flags.tseitin;             // 't': Conversione CNF via Tseitin
-                            useSubsumption = flags.subsumption;     // 's': Eliminazione subsumption
-                            useRestart = flags.restart;             // 'r': Tecnica di reinizio
-                        } else {
-                            // Rifiuta gli argomenti non riconosciuti
+                            useTseitin = flags.tseitin;
+                            useSubsumption = flags.subsumption;
+                            useRestart = flags.restart;
+                        }
+                        // Parsing parametri -gen per generazione istanze
+                        else if (args[i].startsWith(GEN_PARAM)) {
+                            validateExclusiveMode(isFileMode, isDirectoryMode, "generazione");
+                            GenerationConfig genConfig = parseGenerationParameters(args, i);
+                            generationType = genConfig.type;
+                            generationCount = genConfig.count;
+                            isGenerationMode = true;
+                            i = genConfig.nextIndex; // Salta parametri consumati
+                        }
+                        else {
                             throw new IllegalArgumentException("Parametro sconosciuto: " + args[i]);
                         }
                     }
                 }
             }
 
+            // Validazione finale configurazione
+            return validateAndBuildFinalConfiguration(inputPath, outputPath, isFileMode, isDirectoryMode,
+                    isGenerationMode, isConvertMode, timeoutSeconds, useTseitin, useSubsumption, useRestart,
+                    generationType, generationCount);
+        }
+
+        /**
+         * Valida che le modalità operative siano mutualmente esclusive.
+         */
+        private void validateExclusiveMode(boolean mode1, boolean mode2, String currentMode) {
+            if (mode1 || mode2) {
+                throw new IllegalArgumentException("Modalità " + currentMode +
+                        " non può essere combinata con altre modalità (file/directory/generazione sono mutualmente esclusive)");
+            }
+        }
+
+        /**
+         * Parsa parametri per generazione istanze.
+         */
+        private GenerationConfig parseGenerationParameters(String[] args, int currentIndex) {
+            String genParam = args[currentIndex];
+            String genType = genParam.substring(GEN_PARAM.length());
+
+            // Valida tipo generazione
+            if (!GEN_PIGEONHOLE.equals(genType)) {
+                throw new IllegalArgumentException("Tipo generazione non supportato: " + genType +
+                        ". Supportati: " + GEN_PIGEONHOLE);
+            }
+
+            // Ottiene numero istanze
+            if (currentIndex + 1 >= args.length) {
+                throw new IllegalArgumentException("Parametro -gen=" + genType + " richiede numero istanze");
+            }
+
+            int count;
+            try {
+                count = Integer.parseInt(args[currentIndex + 1]);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Numero istanze non valido: " + args[currentIndex + 1]);
+            }
+
+            // Valida range numero istanze
+            if (count < MIN_PIGEONHOLE_INSTANCES || count > MAX_PIGEONHOLE_INSTANCES) {
+                throw new IllegalArgumentException("Numero istanze deve essere tra " +
+                        MIN_PIGEONHOLE_INSTANCES + " e " + MAX_PIGEONHOLE_INSTANCES + ", ricevuto: " + count);
+            }
+
+            return new GenerationConfig(genType, count, currentIndex + 1);
+        }
+
+        /**
+         * Valida configurazione finale e costruisce oggetto risultato.
+         */
+        private SolverConfiguration validateAndBuildFinalConfiguration(String inputPath, String outputPath,
+                                                                       boolean isFileMode, boolean isDirectoryMode, boolean isGenerationMode, boolean isConvertMode,
+                                                                       int timeoutSeconds, boolean useTseitin, boolean useSubsumption, boolean useRestart,
+                                                                       String generationType, int generationCount) {
+
+            // Per modalità generazione, inputPath e timeout non sono necessari
+            if (isGenerationMode) {
+                if (outputPath == null) {
+                    throw new IllegalArgumentException("Modalità generazione richiede directory output (-o)");
+                }
+                return new SolverConfiguration(null, outputPath, false, 0, false, false, false,
+                        true, generationType, generationCount, false);
+            }
+
+            // Per modalità convert, valida che sia specificato input
+            if (isConvertMode) {
+                if (inputPath == null) {
+                    throw new IllegalArgumentException("Modalità -convert richiede input con -f (file) o -d (directory)");
+                }
+
+                // Valida estensione .cnf per modalità convert
+                if (isFileMode && !inputPath.toLowerCase().endsWith(".cnf")) {
+                    throw new IllegalArgumentException("Modalità -convert richiede file con estensione .cnf");
+                }
+
+                return new SolverConfiguration(inputPath, outputPath, isFileMode, timeoutSeconds,
+                        useTseitin, useSubsumption, useRestart, false, null, 0, true);
+            }
+
+            // Per modalità risoluzione SAT normale, inputPath è obbligatorio
             if (inputPath == null) {
                 throw new IllegalArgumentException("Specificare input con -f (file) o -d (directory)");
             }
 
             return new SolverConfiguration(inputPath, outputPath, isFileMode, timeoutSeconds,
-                    useTseitin, useSubsumption, useRestart);
+                    useTseitin, useSubsumption, useRestart, false, null, 0, false);
         }
 
         /**
          * Verifica che esista effettivamente un argomento successivo nell'array prima
          * di restituirlo, prevenendo IndexOutOfBoundsException durante il parsing.
-         *
-         * UTILIZZO TIPICO:
-         * -f <file>: currentIndex punta a "-f", restituisce <file>
-         * -o <dir>: currentIndex punta a "-o", restituisce <dir>
-         * -t <sec>: currentIndex punta a "-t", restituisce <sec>
-         *
-         * @param args array completo degli argomenti da command line
-         * @param currentIndex indice del parametro corrente (es. posizione di "-f")
-         * @param argumentType descrizione human-readable del tipo di valore atteso (per errori)
-         * @return valore stringa dell'argomento successivo (es. path del file)
-         * @throws IllegalArgumentException se non c'è un argomento successivo disponibile
          */
         private String getNextArgument(String[] args, int currentIndex, String argumentType) {
-            // Verifica che esista un argomento successivo nell'array
-            // Previene IndexOutOfBoundsException e fornisce errore descrittivo all'utente
-            if (currentIndex + 1 >= args.length) {
-                // Comunica quale parametro ha fallito e cosa si aspettava
-                throw new IllegalArgumentException("Parametro " + args[currentIndex] +
+            if (currentIndex >= args.length) {
+                throw new IllegalArgumentException("Parametro " + args[currentIndex - 1] +
                         " richiede " + argumentType);
             }
-
-            // Accesso all'elemento successivo dopo validazione bounds
-            // currentIndex punta al flag (es. "-f"), currentIndex + 1 punta al valore (es. "input.cnf")
-            return args[currentIndex + 1];
+            return args[currentIndex];
         }
 
         /**
          * Estrae il valore del timeout dalla command line, lo converte da stringa a intero
          * e applica validazioni di range per garantire un valore utilizzabile dal solver.
-         *
-         * VALIDAZIONI APPLICATE:
-         * - Conversione stringa -> intero (gestione NumberFormatException)
-         * - Range minimo: timeout >= MIN_TIMEOUT_SECONDS (previene valori inutilizzabili)
-         * - Nessun limite massimo (problemi molto complessi possono richiedere ore)
-         *
-         * @param args array completo argomenti command line
-         * @param currentIndex posizione del flag "-t" nell'array
-         * @return valore timeout validato in secondi, pronto per uso nel solver
-         * @throws IllegalArgumentException se valore non parsabile o fuori range valido
          */
         private int parseAndValidateTimeout(String[] args, int currentIndex) {
-            // Ottiene la stringa si timeout dall'argomento successivo a "-t"
-            // Delega a getNextArgument() la validazione bounds dell'array
             String timeoutStr = getNextArgument(args, currentIndex, "numero secondi");
 
             try {
-                // Parsing stringa -> intero con gestione eccezioni
                 int timeout = Integer.parseInt(timeoutStr);
-
-                // Verifica che timeout sia utilizzabile praticamente
-                // MIN_TIMEOUT_SECONDS previene valori troppo bassi che causerebbero timeout immediati
                 if (timeout < MIN_TIMEOUT_SECONDS) {
                     throw new IllegalArgumentException("Timeout minimo: " + MIN_TIMEOUT_SECONDS + " secondi");
                 }
-
                 return timeout;
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("Valore timeout non valido: " + timeoutStr);
@@ -1397,69 +1855,35 @@ public final class Main {
         /**
          * Analizza la stringa di flags passata al parametro -opt e converte ogni carattere
          * in una configurazione booleana specifica per le opzioni aggiuntive del solver CDCL.
-         *
-         * FORMATO SUPPORTATO:
-         * • -opt=<flags>: Combinazione caratteri individuali (es: -opt=tr, -opt=s, -opt=sr)
-         * • -opt=all: attiva tutte le ottimizzazioni disponibili
-         * • -opt="": Stringa vuota non consentita (errore esplicito)
-         *
-         * FLAGS DISPONIBILI:
-         * 't': Tseitin encoding per conversione in E-CNF
-         * 's': Sussunzione per le clausole sovrainsieme
-         * 'r': Tecnica del reinizio per prevenzione stalli di ricerca
-         *
-         * @param flagsStr stringa contenente caratteri flags dopo prefisso -opt
-         * @return OptimizationFlags con configurazione booleana per ogni opzione aggiuntiva
-         * @throws IllegalArgumentException se stringa vuota o null (configurazione ambigua)
          */
         private OptimizationFlags parseOptionalFlags(String flagsStr) {
-            // Null o empty string non hanno semantica chiara per ottimizzazioni
             if (flagsStr == null || flagsStr.trim().isEmpty()) {
                 throw new IllegalArgumentException("Valore -opt vuoto");
             }
 
-            // Gestione del caso speciale "all" per l'attivazione totale
             if (flagsStr.equals(OPT_ALL)) {
-                // Attiva tutte le ottimizzazioni disponibili: Tseitin + Subsumption + Restart
                 return new OptimizationFlags(true, true, true);
             }
 
-            // 't': Abilita conversione Tseitin per realizzare formule E-CNF
             boolean tseitin = flagsStr.contains(OPT_TSEITIN);
-
-            // 's': Abilita la sussunzione per riduzione spazio ricerca
             boolean subsumption = flagsStr.contains(OPT_SUBSUMPTION);
-
-            // 'r': Abilita tecnica di reinizio
             boolean restart = flagsStr.contains(OPT_RESTART);
 
-            // OptimizationFlags incapsula la configurazione booleana in oggetto type-safe
             return new OptimizationFlags(tseitin, subsumption, restart);
         }
 
         /**
          * Esegue i controlli completi su un file specificato dall'utente per garantire che
-         * il solver possa accedervi e processarlo. Applica validazioni progressive da
-         * esistenza fisica fino ai permessi di lettura effettivi.
-         *
-         * @param filePath path assoluto o relativo del file da validare
-         * @throws IllegalArgumentException se file non accessibile con messaggio specifico dell'errore
+         * il solver possa accedervi e processarlo.
          */
         private void validateFileExists(String filePath) {
-            // Ottiene la rappresentazione filesystem del path specificato
             File file = new File(filePath);
-
-            // Verifica che il path corrisponda a un elemento reale nel filesystem
             if (!file.exists()) {
                 throw new IllegalArgumentException("File non esistente: " + filePath);
             }
-
-            // Assicura che il path punti a un file regolare, non directory/symlink
             if (!file.isFile()) {
                 throw new IllegalArgumentException("Non è un file: " + filePath);
             }
-
-            // Verifica che il processo corrente possa leggere il contenuto
             if (!file.canRead()) {
                 throw new IllegalArgumentException("File non leggibile: " + filePath);
             }
@@ -1500,6 +1924,11 @@ public final class Main {
     private record OptimizationFlags(boolean tseitin, boolean subsumption, boolean restart) {}
 
     /**
+     * Configurazione per generazione istanze.
+     */
+    private record GenerationConfig(String type, int count, int nextIndex) {}
+
+    /**
      * Risultato elaborazione batch con statistiche.
      */
     private static class BatchResult {
@@ -1533,7 +1962,8 @@ public final class Main {
     /**
      * Risultato completo processamento formula.
      */
-    private record FormulaProcessingResult(CNFConverter finalFormula, String conversionInfo, boolean isECNF) {}
+    private record FormulaProcessingResult(CNFConverter finalFormula, String conversionInfo, boolean isECNF,
+                                           int initialClausesCount, int initialVariablesCount) {}
 
     //endregion
 }

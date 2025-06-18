@@ -67,15 +67,6 @@ public class CDCLSolver {
     /** Numero totale di decisioni euristiche prese */
     private int decisionCount = 0;
 
-    /** Numero di spiegazioni generate (conflict analysis - può essere > conflictCount) */
-    private int explanationCount = 0;
-
-    /** Numero di clausole effettivamente apprese (dopo deduplicazione) */
-    private int learnedClausesCount = 0;
-
-    /** Numero di reset del tracking anti-loop (quando tutte le variabili sono state tentate) */
-    private int antiLoopResetCount = 0;
-
     /** Statistiche dettagliate per ogni singola decisione euristica */
     private final List<DecisionStatistics> decisionStatisticsList = new ArrayList<>();
 
@@ -610,39 +601,41 @@ public class CDCLSolver {
     private ConflictAnalysisResult resolveConflict(List<Integer> conflictClause, List<Integer> justifyingClause) {
         System.out.println("Risoluzione del conflitto...");
 
-        conflictCount++;                                                               // Contatore conflitti locali
-        statistics.incrementConflicts();                                               // Statistiche globali
-        updateCurrentDecisionStats(stats -> stats.conflicts++);        // Statistiche livello decisionale corrente
-        updateVSIDSCounters(conflictClause);                                           // Incrementa la priorità dei letterali coinvolti nel conflitto
+        // Incrementa contatore conflitti
+        conflictCount++;
+        statistics.incrementConflicts();
+        updateCurrentDecisionStats(stats -> stats.conflicts++);
 
-        // Valuta se effettuare il reinizio, ovviamente se attivo
+        // Aggiorna contatori VSIDS
+        updateVSIDSCounters(conflictClause);
+
+        // Valuta se effettuare il reinizio
         if (restartTechnique != null && restartTechnique.registerConflictAndCheckRestart()) {
             System.out.println("[I] Reinizio attivo");
-            statistics.incrementRestarts();                             // Conta il reinizio per l'analisi delle performance
-            return executeRestart();                                    // Termina con strategia reinizio
+            statistics.incrementRestarts();
+            return executeRestart();
         }
 
-        // Genera la clausola da apprendere tramite risoluzione
-        List<Integer> learnedClause = generateExplanation(conflictClause, justifyingClause);
-        explanationCount++;                                             // Contatore spiegazioni generate
+        // Genera la clausola di spiegazione tramite risoluzione
+        List<Integer> explanationClause = generateExplanation(conflictClause, justifyingClause);
         statistics.incrementExplanations();
         updateCurrentDecisionStats(stats -> stats.explanations++);
 
-        // Registra il passo di risoluzione per prova matematica (nel caso sia UNSAT)
-        proofGenerator.recordResolutionStep(conflictClause, justifyingClause, learnedClause);
+        // Registra il passo di risoluzione per prova matematica
+        proofGenerator.recordResolutionStep(conflictClause, justifyingClause, explanationClause);
 
-        // Controlla se è insoddisfacibile
-        if (learnedClause.isEmpty()) {
-            return ConflictAnalysisResult.unsatisfiable();              // La formula è UNSAT
+        // Controlla se è insoddisfacibile (clausola vuota)
+        if (explanationClause.isEmpty()) {
+            return ConflictAnalysisResult.unsatisfiable();
         }
 
-        // Applica il backtrack a seconda della lunghezza della clausola da apprendere
-        if (learnedClause.size() == 1) {
-            // Clausola unitaria => backtrack fino al livello che la rende unit
-            return handleUnitClauseLearning(learnedClause);
+        // Gestione in base alla dimensione della clausola di spiegazione
+        if (explanationClause.size() == 1) {
+            // Caso 1: Clausola unitaria
+            return handleUnitClauseLearning(explanationClause);
         } else {
-            // Clausola multi-letterale => backtrack non-cronologico standard
-            return handleNonUnitClauseLearning(learnedClause, conflictClause, justifyingClause);
+            // Caso 2: Clausola multi-letterale
+            return handleNonUnitClauseLearning(explanationClause, conflictClause, justifyingClause);
         }
     }
 
@@ -668,7 +661,6 @@ public class CDCLSolver {
             }
 
             // Aggiorna statistiche per risoluzione aggiuntiva
-            explanationCount++;
             statistics.incrementExplanations();
             updateCurrentDecisionStats(stats -> stats.explanations++);
         }
@@ -678,80 +670,178 @@ public class CDCLSolver {
     }
 
     /**
-     * Gestisce l'apprendimento e il backtrack per clausole multi-letterale.
+     * Gestisce l'apprendimento e il backtrack per le clausole multi-letterale.
+     * È necessario perché potrebbe dare ancora conflitti sullo stesso livello
      *
-     * @param initialClause clausola multi-letterale appresa inizialmente
-     * @param conflictClause clausola originale che causó il conflitto (per tracing)
-     * @param justifyingClause clausola giustificante originale (per tracing)
+     * @param explanationClause clausola multi-letterale da analizzare
+     * @param originalConflictClause clausola originale del conflitto (per tracciamento)
+     * @param originalJustifyingClause clausola giustificante originale (per tracciamento)
      * @return ConflictAnalysisResult con backtrack appropriato o UNSATISFIABLE
      */
-    private ConflictAnalysisResult handleNonUnitClauseLearning(List<Integer> initialClause,
-                                                               List<Integer> conflictClause,
-                                                               List<Integer> justifyingClause) {
-        List<Integer> currentClause = initialClause;                    // Clausola da raffinare iterativamente
-        int iterations = 0;
+    private ConflictAnalysisResult handleNonUnitClauseLearning(List<Integer> explanationClause,
+                                                               List<Integer> originalConflictClause,
+                                                               List<Integer> originalJustifyingClause) {
 
-        while (iterations < 50) {                                      // Limite di sicurezza per evitare loop infiniti
-            iterations++;
+        List<Integer> currentClause = explanationClause;
+        int currentLevel = decisionStack.getLevel();
 
-            // Si verifica la consistenza con gli assegnamenti correnti
-            if (isConsistentWithCurrentAssignments(currentClause)) {
+        // Continua a risolvere finché necessario
+        while (true) {
+            // Cerca conflitti con letterali propagati sullo stesso livello
+            List<Integer> conflictingClauseOnLevel = findConflictingClauseOnSameLevel(currentClause, currentLevel);
 
-                // Si controlla anche la consistenza con clausole apprese in precedenza
-                List<Integer> conflicting = checkConsistencyWithLearnedClauses(currentClause);
-                if (conflicting != null) {
-                    // Risolve ulteriormente per eliminare inconsistenza
-                    List<Integer> finalClause = generateExplanation(currentClause, conflicting);
-                    proofGenerator.recordResolutionStep(currentClause, conflicting, finalClause);
+            if (conflictingClauseOnLevel == null) {
+                // Nessun conflitto sullo stesso livello - procedi con il backtrack
+                break;
+            }
 
-                    if (finalClause.isEmpty()) {
-                        return ConflictAnalysisResult.unsatisfiable();      // UNSAT
-                    }
+            // Genera nuova spiegazione risolvendo il conflitto
+            List<Integer> newExplanation = generateExplanation(currentClause, conflictingClauseOnLevel);
+            statistics.incrementExplanations();
+            updateCurrentDecisionStats(stats -> stats.explanations++);
 
-                    // Aggiorna le statistiche per risoluzione aggiuntiva
-                    explanationCount++;
-                    statistics.incrementExplanations();
-                    updateCurrentDecisionStats(stats -> stats.explanations++);
+            // Registra il passo per la prova
+            proofGenerator.recordResolutionStep(currentClause, conflictingClauseOnLevel, newExplanation);
+
+            // Controlla se UNSAT
+            if (newExplanation.isEmpty()) {
+                return ConflictAnalysisResult.unsatisfiable();
+            }
+
+            // Se la nuova spiegazione è unitaria, delega al gestore appropriato
+            if (newExplanation.size() == 1) {
+                return handleUnitClauseLearning(newExplanation);
+            }
+
+            // Continua con la nuova clausola
+            currentClause = newExplanation;
+        }
+
+        // A questo punto abbiamo una clausola multi-letterale senza conflitti sullo stesso livello
+        // Trova il letterale asserito (opposto alla decisione del livello corrente)
+        Integer assertedLiteral = findAssertedLiteral(currentClause, currentLevel);
+
+        if (assertedLiteral == null) {
+            // Nessun letterale asserito trovato - backtrack al livello precedente
+            return ConflictAnalysisResult.backtrack(currentClause, Math.max(0, currentLevel - 1));
+        }
+
+        // Trova il livello di backtrack per il letterale asserito
+        int backtrackLevel = findBacktrackLevel(currentClause, assertedLiteral, currentLevel);
+
+        // Ritorna il risultato con la clausola appresa e il livello di backtrack
+        return ConflictAnalysisResult.backtrack(currentClause, backtrackLevel);
+    }
+
+
+    /**
+     * Trova una clausola che entra in conflitto con la clausola data sullo stesso livello.
+     *
+     * @param clause clausola da verificare
+     * @param level livello decisionale corrente
+     * @return clausola conflittuale trovata, o null se nessun conflitto
+     */
+    private List<Integer> findConflictingClauseOnSameLevel(List<Integer> clause, int level) {
+        // Ottieni tutti gli assegnamenti del livello corrente
+        List<AssignedLiteral> levelAssignments = decisionStack.getAssignmentsAtLevel(level);
+
+        // Per ogni letterale della clausola
+        for (Integer literal : clause) {
+            Integer variable = Math.abs(literal);
+            boolean expectedValue = literal > 0;
+
+            // Cerca se c'è un'assegnazione opposta sullo stesso livello
+            for (AssignedLiteral assignment : levelAssignments) {
+                if (assignment.getVariable().equals(variable) &&
+                        assignment.getValue() != expectedValue &&
+                        assignment.hasAncestorClause()) {
+
+                    // Trovato conflitto - ritorna la clausola ancestrale
+                    return assignment.getAncestorClause();
                 }
-
-                // Determina il livello per cui fare il salto all'indietro
-                int backtrackLevel = currentClause.size() == 1 ? 0 :   // Unit -> livello root
-                        Math.max(0, decisionStack.getLevel() - 1);     // Non-unit -> livello precedente
-                return ConflictAnalysisResult.backtrack(currentClause, backtrackLevel);
-
-            } else {
-                // Qui la clausola è inconsistente: serve un raffinamento
-
-                // Trova la prossima clausola per continuare risoluzione
-                List<Integer> nextJustifying = findNextJustifyingClause(currentClause);
-                if (nextJustifying == null) {
-                    return ConflictAnalysisResult.unsatisfiable();     // UNSAT
-                }
-
-                // Genera la nuova clausola tramite risoluzione
-                List<Integer> newClause = generateExplanation(currentClause, nextJustifying);
-                proofGenerator.recordResolutionStep(currentClause, nextJustifying, newClause);
-
-                if (newClause.isEmpty()) {
-                    return ConflictAnalysisResult.unsatisfiable();     // UNSAT
-                }
-
-                // Aggiorna le statistiche per iterazione raffinamento
-                explanationCount++;
-                statistics.incrementExplanations();
-                updateCurrentDecisionStats(stats -> stats.explanations++);
-
-                // Controlla se si è ottenuta una clausola unitaria
-                if (newClause.size() == 1) {
-                    return handleUnitClauseLearning(newClause);        // Delega al gestore specializzato
-                }
-
-                currentClause = newClause;                             // Continua raffinamento con nuova clausola
             }
         }
 
-        return ConflictAnalysisResult.unsatisfiable();                 // Fallback se il processo non converge
+        return null; // Nessun conflitto trovato
     }
+
+    /**
+     * Trova il letterale asserito nella clausola (opposto alla decisione del livello corrente).
+     *
+     * @param clause clausola da analizzare
+     * @param currentLevel livello decisionale corrente
+     * @return letterale asserito, o null se non trovato
+     */
+    private Integer findAssertedLiteral(List<Integer> clause, int currentLevel) {
+        // Ottieni la decisione del livello corrente
+        List<AssignedLiteral> currentLevelAssignments = decisionStack.getAssignmentsAtLevel(currentLevel);
+
+        for (AssignedLiteral assignment : currentLevelAssignments) {
+            if (assignment.isDecision()) {
+                // Trovata la decisione del livello
+                Integer decisionVariable = assignment.getVariable();
+                boolean decisionValue = assignment.getValue();
+
+                // Cerca il letterale opposto nella clausola
+                for (Integer literal : clause) {
+                    if (Math.abs(literal) == decisionVariable) {
+                        // Verifica se è opposto alla decisione
+                        boolean literalPositive = literal > 0;
+                        if (literalPositive != decisionValue) {
+                            return literal; // Questo è il letterale asserito
+                        }
+                    }
+                }
+            }
+        }
+
+        return null; // Nessun letterale asserito trovato
+    }
+
+    /**
+     * Trova il livello di backtrack per il letterale asserito.
+     *
+     * @param clause clausola di conflitto
+     * @param assertedLiteral letterale asserito da propagare
+     * @param currentLevel livello corrente
+     * @return livello target per il backtrack
+     */
+    private int findBacktrackLevel(List<Integer> clause, Integer assertedLiteral, int currentLevel) {
+        int maxLevel = -1;
+
+        // Per ogni letterale nella clausola (eccetto l'asserito)
+        for (Integer literal : clause) {
+            if (!literal.equals(assertedLiteral)) {
+                Integer variable = Math.abs(literal);
+
+                // Trova il livello di assegnazione di questa variabile
+                for (int level = currentLevel; level >= 0; level--) {
+                    List<AssignedLiteral> levelAssignments = decisionStack.getAssignmentsAtLevel(level);
+
+                    for (AssignedLiteral assignment : levelAssignments) {
+                        if (assignment.getVariable().equals(variable)) {
+                            // Trovato il livello di questa variabile
+                            maxLevel = Math.max(maxLevel, level);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Il livello di backtrack è il massimo tra i livelli delle altre variabili
+        // o 0 se non ci sono altre variabili assegnate
+        return Math.max(0, maxLevel);
+    }
+
+
+    //######################################################################
+
+    //######################################################################
+
+    //######################################################################
+
+
 
     /**
      * Genera la clausola da apprendere tramite la risoluzione binaria tra due clausole.
@@ -1056,11 +1146,10 @@ public class CDCLSolver {
         int backtrackLevel = analysis.getBacktrackLevel();              // Livello decisionale target
 
         // Apprendimento della clausola
-        if (!learnedClause.isEmpty()) {                                 // Clausola appresa valida?
+        if (!learnedClause.isEmpty()) {
             learnClauseIfNovel(learnedClause);                          // Aggiunge solo se non duplicata
 
             // Aggiorna le statistiche di apprendimento
-            learnedClausesCount++;
             statistics.incrementLearnedClauses();
             updateCurrentDecisionStats(stats -> stats.learnedClauses++);
         }
@@ -1215,7 +1304,6 @@ public class CDCLSolver {
      */
     private void resetAntiLoopTracking() {
         alreadyChosenVariables.clear();                                // Azzera tracking variabili provate
-        antiLoopResetCount = 0;                                        // Azzera il contatore
     }
 
     //endregion
@@ -1254,7 +1342,6 @@ public class CDCLSolver {
 
         // Azzeramento del tracking per nuovo ciclo
         alreadyChosenVariables.clear();                               // Azzera il tracking variabili provate
-        antiLoopResetCount++;                                         // Conta il reset per statistiche
 
         return findFirstUnassignedVariable();                         // Riprova dalla prima disponibile
     }

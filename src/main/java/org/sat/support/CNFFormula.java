@@ -13,17 +13,17 @@ import java.util.logging.Level;
  * compatte per clausole, massimizzando efficienza di memoria e velocità di accesso.
  *
  * OTTIMIZZAZIONI IMPLEMENTATE:
- * • Mapping bidirezionale variabili simboliche ↔ ID numerici
- * • Clausole rappresentate come List<Integer> per accesso O(1)
- * • Validazione completa durante conversione per prevenzione errori
- * • Caching intelligente per operazioni frequenti
- * • Statistiche dettagliate per analisi complessità formula
+ * - Mapping bidirezionale variabili simboliche ↔ ID numerici
+ * - Clausole rappresentate come List<Integer> per accesso O(1)
+ * - Validazione completa durante conversione per prevenzione errori
+ * - Caching intelligente per operazioni frequenti
+ * - Statistiche dettagliate per analisi complessità formula
  *
  * INVARIANTI MANTENUTE:
- * • Ogni variabile simbolica ha ID numerico univoco ≥ 1
- * • Lista clausole immutabile dopo costruzione
- * • Mapping variabili preserva ordine di inserimento
- * • Tutti i letterali referenziano variabili valide
+ * - Ogni variabile simbolica ha ID numerico univoco ≥ 1
+ * - Lista clausole immutabile dopo costruzione
+ * - Mapping variabili preserva ordine di inserimento
+ * - Tutti i letterali referenziano variabili valide
  */
 public class CNFFormula {
 
@@ -34,9 +34,9 @@ public class CNFFormula {
     /**
      * Clausole CNF in formato numerico ottimizzato per elaborazione CDCL.
      * Ogni clausola è List<Integer> dove ogni Integer rappresenta un letterale:
-     * • Valori positivi: letterali positivi (variabile vera)
-     * • Valori negativi: letterali negati (variabile falsa)
-     * • Invariante: lista immutabile dopo costruzione completa
+     * - Valori positivi: letterali positivi (variabile vera)
+     * - Valori negativi: letterali negati (variabile falsa)
+     * - Invariante: lista immutabile dopo costruzione completa
      */
     private final List<List<Integer>> clauses;
 
@@ -167,10 +167,10 @@ public class CNFFormula {
      * Converte una singola clausola da nodo albero a rappresentazione numerica ottimizzata.
      *
      * TIPI DI CLAUSOLE GESTITI:
-     * • OR: Disgiunzione di letterali → clausola normale multi-letterale
-     * • ATOM: Variabile atomica → clausola unitaria positiva
-     * • NOT: Negazione di variabile → clausola unitaria negativa
-     * • Strutture complesse: Gestione ricorsiva con validazione
+     * - OR: Disgiunzione di letterali → clausola normale multi-letterale
+     * - ATOM: Variabile atomica → clausola unitaria positiva
+     * - NOT: Negazione di variabile → clausola unitaria negativa
+     * - Strutture complesse: Gestione ricorsiva con validazione
      *
      * @param clauseNode nodo albero rappresentante la clausola
      * @return lista letterali numerici (vuota se conversione fallisce)
@@ -236,9 +236,9 @@ public class CNFFormula {
      * Converte un singolo letterale in rappresentazione numerica DIMACS.
      *
      * CONVERSIONE DIMACS:
-     * • ATOM "P" → +ID (letterale positivo)
-     * • NOT ATOM "¬P" → -ID (letterale negativo)
-     * • ID sono generati progressivamente per mantenere consistenza
+     * - ATOM "P" → +ID (letterale positivo)
+     * - NOT ATOM "¬P" → -ID (letterale negativo)
+     * - ID sono generati progressivamente per mantenere consistenza
      *
      * @param literalNode nodo rappresentante il letterale
      * @return ID numerico del letterale (null se conversione fallisce)
@@ -324,10 +324,10 @@ public class CNFFormula {
      * Ottiene ID numerico per variabile, creandolo se necessario con strategia lazy.
      *
      * STRATEGIA ASSEGNAZIONE ID:
-     * • Se variabile già mappata → restituisce ID esistente
-     * • Se variabile nuova → assegna prossimo ID disponibile (progressivo)
-     * • Aggiorna mapping bidirezionale e registra nel log
-     * • Garantisce univocità e consistenza degli ID
+     * - Se variabile già mappata → restituisce ID esistente
+     * - Se variabile nuova → assegna prossimo ID disponibile (progressivo)
+     * - Aggiorna mapping bidirezionale e registra nel log
+     * - Garantisce univocità e consistenza degli ID
      *
      * @param variableName nome simbolico della variabile
      * @return ID numerico univoco (sempre > 0)

@@ -13,7 +13,6 @@ import java.util.logging.Level;
  * Rappresenta formule logiche proposizionali in forma ad albero e implementa la loro
  * trasformazione in Forma Normale Congiuntiva (CNF), applicando algoritmi matematici
  * rigorosi per preservare equivalenza logica durante tutte le trasformazioni.
- *
  */
 public class CNFConverter {
 

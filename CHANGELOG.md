@@ -5,6 +5,44 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.10.1] - 2025-06-18
+### Fixed
+- Introdotti limiti di lunghezza per gli output scritti nei file `.result`.
+- Se la dimensione della statistica o della prova supera una certa soglia,
+  allora viene visualizzato un messaggio informativo invece del contenuto completo.
+
+
+## [1.10.0] - 2025-06-18
+### Added
+- Introdotta la nuova flag `-convert` per l’elaborazione di file `.cnf` in formato DIMACS.
+- Ora è possibile testare problemi SAT/UNSAT presenti online o in dataset standard,
+  garantendo piena compatibilità con lo standard DIMACS.
+
+
+## [1.9.2] - 2025-06-17
+### Refactored
+- Sistemati e aggiornati alcuni commenti nel codice per migliorarne la leggibilità.
+- Corretto il formato di alcuni messaggi di output durante l’esecuzione,
+  rendendoli più chiari e coerenti.
+
+
+## [1.9.1] - 2025-06-15
+### Fixed
+- Corretto il funzionamento dell'analisi dei conflitti nel solver CDCL.
+- Il sistema gestisce ora correttamente anche i casi limite,
+  garantendo maggiore robustezza e affidabilità.
+
+
+## [1.9.0] - 2025-06-15
+### Added
+- Aggiunta la possibilità di generare istanze del problema **Pigeonhole**
+  tramite riga di comando con la flag:
+
+  _-gen=pigeonhole [numero] -o [directory]_
+- Le istanze vengono salvate in formato `.txt` all’interno di una cartella `PIGEONHOLE`
+  creata automaticamente nella directory di output.
+
+
 ## [1.8.8] - 2025-06-14
 ### Refactored
 - Refactoring generale del codice per migliorarne la documentazione interna

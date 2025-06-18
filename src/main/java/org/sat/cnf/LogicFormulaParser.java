@@ -25,33 +25,30 @@ import java.util.logging.Logger;
  * della logica proposizionale con precedenze e associatività corrette.
  *
  * OPERATORI SUPPORTATI (in ordine di precedenza crescente):
- * • Biimplicazione (↔): A ↔ B ≡ (A → B) ∧ (B → A)
- * • Implicazione (→): A → B ≡ ¬A ∨ B
- * • Disgiunzione (∨): OR logico, associativo a sinistra
- * • Congiunzione (∧): AND logico, associativo a sinistra
- * • Negazione (¬): NOT logico, associativo a destra
- * • Variabili atomiche: identificatori e costanti logiche
+ * - Biimplicazione (<->): A <-> B ~ (A -> B) & (B -> A)
+ * - Implicazione (->): A -> B ~ !A | B
+ * - Disgiunzione (|): OR logico, associativo a sinistra
+ * - Congiunzione (&): AND logico, associativo a sinistra
+ * - Negazione (!): NOT logico, associativo a destra
+ * - Variabili atomiche: identificatori e costanti logiche
  *
  * TRASFORMAZIONI SEMANTICHE:
- * • Elimina implicazioni e biimplicazioni convertendole in AND/OR/NOT
- * • Gestisce catene di operatori (A ↔ B ↔ C, A → B → C)
- * • Preserva precedenze degli operatori secondo standard logici
- * • Converte costanti logiche (TRUE/FALSE) in rappresentazioni appropriate
+ * - Elimina implicazioni e biimplicazioni convertendole in AND/OR/NOT
+ * - Gestisce catene di operatori (A <-> B <-> C, A -> B -> C)
+ * - Preserva precedenze degli operatori secondo standard logici
+ * - Converte costanti logiche (TRUE/FALSE) in rappresentazioni appropriate
  *
  * ARCHITETTURA VISITOR:
- * • Pattern visitor per attraversamento albero sintattico
- * • Ogni metodo visit gestisce un costrutto grammaticale specifico
- * • Conversione bottom-up: foglie → radice
- * • Costruzione incrementale strutture CNFConverter
+ * - Pattern visitor per attraversamento albero sintattico
+ * - Ogni metodo visit gestisce un costrutto grammaticale specifico
+ * - Conversione bottom-up: foglie -> radice
+ * - Costruzione incrementale strutture CNFConverter
  *
  * UTILIZZO TIPICO:
- * • Input: ParseTree da ANTLR parser
- * • Processing: Traversal visitor con conversioni semantiche
- * • Output: CNFConverter tree pronto per toCNF()
- * • Integration: Ponte tra parsing testuale e elaborazione logica
- *
- * @author Amos Lo Verde
- * @version 2.0.0
+ * - Input: ParseTree da ANTLR parser
+ * - Processing: Traversal visitor con conversioni semantiche
+ * - Output: CNFConverter tree pronto per toCNF()
+ * - Integration: Ponte tra parsing testuale ed elaborazione logica
  */
 public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
 
@@ -93,17 +90,17 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     //region GESTIONE BIIMPLICAZIONI (PRECEDENZA PIÙ BASSA)
 
     /**
-     * Gestisce biimplicazioni (↔) con semantica matematica rigorosa.
+     * Gestisce biimplicazioni (<->) con semantica matematica rigorosa.
      *
      * SEMANTICA BIIMPLICAZIONE:
-     * • A ↔ B ≡ (A → B) ∧ (B → A)
-     * • A ↔ B ≡ (¬A ∨ B) ∧ (¬B ∨ A)
-     * • Operatore simmetrico: A ↔ B ≡ B ↔ A
+     * - A <-> B ~ (A -> B) & (B -> A)
+     * - A <-> B ~ (!A | B) & (!B | A)
+     * - Operatore simmetrico: A <-> B ~ B <-> A
      *
      * GESTIONE CATENE:
-     * • A ↔ B ↔ C ≡ (A ↔ B) ∧ (B ↔ C)
-     * • Espansione sequenziale per catene multiple
-     * • Associatività gestita attraverso iterazione sistematica
+     * - A <-> B <-> C ~ (A <-> B) & (B <-> C)
+     * - Espansione sequenziale per catene multiple
+     * - Associatività gestita attraverso iterazione sistematica
      *
      * @param ctx contesto biimplicazione dalla grammatica
      * @return struttura CNFConverter rappresentante la biimplicazione espansa
@@ -117,14 +114,14 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
 
         LOGGER.fine("Elaborazione catena biimplicazioni: " + ctx.IFF().size() + " operatori");
 
-        // Gestione catene: A ↔ B ↔ C → (A ↔ B) ∧ (B ↔ C)
+        // Gestione catene: A <-> B <-> C -> (A <-> B) & (B <-> C)
         List<CNFConverter> biimplicationClauses = new ArrayList<>();
 
         for (int i = 0; i < ctx.implication().size() - 1; i++) {
             CNFConverter leftOperand = visit(ctx.implication(i));
             CNFConverter rightOperand = visit(ctx.implication(i + 1));
 
-            // Espansione A ↔ B in (A → B) ∧ (B → A)
+            // Espansione A <-> B in (A -> B) & (B -> A)
             CNFConverter expandedBiimplication = expandBiimplication(leftOperand, rightOperand);
             biimplicationClauses.add(expandedBiimplication);
         }
@@ -133,24 +130,24 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     }
 
     /**
-     * Espande singola biimplicazione A ↔ B in forma CNF-friendly.
+     * Espande singola biimplicazione A <-> B in forma CNF-friendly.
      */
     private CNFConverter expandBiimplication(CNFConverter left, CNFConverter right) {
-        // A ↔ B ≡ (A → B) ∧ (B → A) ≡ (¬A ∨ B) ∧ (¬B ∨ A)
+        // A <-> B ~ (A -> B) & (B -> A) ~ (!A | B) & (!B | A)
 
-        // Direzione 1: A → B ≡ ¬A ∨ B
+        // Direzione 1: A -> B ~ !A | B
         List<CNFConverter> leftToRightOperands = new ArrayList<>();
-        leftToRightOperands.add(new CNFConverter(left));   // ¬A
+        leftToRightOperands.add(new CNFConverter(left));   // !A
         leftToRightOperands.add(right);                     // B
         CNFConverter leftToRight = new CNFConverter(CNFConverter.Type.OR, leftToRightOperands);
 
-        // Direzione 2: B → A ≡ ¬B ∨ A
+        // Direzione 2: B -> A ~ !B | A
         List<CNFConverter> rightToLeftOperands = new ArrayList<>();
-        rightToLeftOperands.add(new CNFConverter(right));  // ¬B
+        rightToLeftOperands.add(new CNFConverter(right));  // !B
         rightToLeftOperands.add(left);                      // A
         CNFConverter rightToLeft = new CNFConverter(CNFConverter.Type.OR, rightToLeftOperands);
 
-        // Congiunzione finale: (¬A ∨ B) ∧ (¬B ∨ A)
+        // Congiunzione finale: (!A | B) & (!B | A)
         List<CNFConverter> biimplicationOperands = new ArrayList<>();
         biimplicationOperands.add(leftToRight);
         biimplicationOperands.add(rightToLeft);
@@ -163,17 +160,17 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     //region GESTIONE IMPLICAZIONI (PRECEDENZA MEDIA-BASSA)
 
     /**
-     * Gestisce implicazioni (→) con conversione in forma OR equivalente.
+     * Gestisce implicazioni (->) con conversione in forma OR equivalente.
      *
      * SEMANTICA IMPLICAZIONE:
-     * • A → B ≡ ¬A ∨ B
-     * • Falso solo quando A vero e B falso
-     * • Associatività a destra: A → B → C ≡ A → (B → C)
+     * - A -> B ~ !A | B
+     * - Falso solo quando A vero e B falso
+     * - Associatività a destra: A -> B -> C ~ A -> (B -> C)
      *
      * GESTIONE CATENE:
-     * • A → B → C elaborata ricorsivamente
-     * • Precedenza rispetto a disgiunzione preservata
-     * • Conversione diretta senza passaggi intermedi
+     * - A -> B -> C elaborata ricorsivamente
+     * - Precedenza rispetto a disgiunzione preservata
+     * - Conversione diretta senza passaggi intermedi
      *
      * @param ctx contesto implicazione dalla grammatica
      * @return struttura CNFConverter rappresentante l'implicazione convertita
@@ -187,13 +184,13 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
 
         LOGGER.fine("Elaborazione implicazione con conversione semantica");
 
-        // A → B ≡ ¬A ∨ B
+        // A -> B ~ !A | B
         CNFConverter antecedent = visit(ctx.disjunction());     // A
         CNFConverter consequent = visit(ctx.implication());     // B (ricorsivo per associatività destra)
 
-        // Costruzione ¬A ∨ B
+        // Costruzione !A | B
         List<CNFConverter> implicationOperands = new ArrayList<>();
-        implicationOperands.add(new CNFConverter(antecedent));  // ¬A
+        implicationOperands.add(new CNFConverter(antecedent));  // !A
         implicationOperands.add(consequent);                    // B
 
         return new CNFConverter(CNFConverter.Type.OR, implicationOperands);
@@ -204,17 +201,17 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     //region GESTIONE DISGIUNZIONI (PRECEDENZA MEDIA)
 
     /**
-     * Gestisce disgiunzioni (∨) con supporto per operandi multipli.
+     * Gestisce disgiunzioni (|) con supporto per operandi multipli.
      *
      * SEMANTICA DISGIUNZIONE:
-     * • A ∨ B: vero se almeno uno degli operandi è vero
-     * • Operatore associativo: (A ∨ B) ∨ C ≡ A ∨ (B ∨ C)
-     * • Operatore commutativo: A ∨ B ≡ B ∨ A
+     * - A | B: vero se almeno uno degli operandi è vero
+     * - Operatore associativo: (A | B) | C ~ A | (B | C)
+     * - Operatore commutativo: A | B ~ B | A
      *
      * OTTIMIZZAZIONI:
-     * • Singolo operando: estrazione diretta senza wrapper OR
-     * • Operandi multipli: costruzione lista unificata
-     * • Preservazione ordine per debugging e tracciabilità
+     * - Singolo operando: estrazione diretta senza wrapper OR
+     * - Operandi multipli: costruzione lista unificata
+     * - Preservazione ordine per debugging e tracciabilità
      *
      * @param ctx contesto disgiunzione dalla grammatica
      * @return struttura CNFConverter rappresentante la disgiunzione
@@ -242,17 +239,17 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     //region GESTIONE CONGIUNZIONI (PRECEDENZA MEDIA-ALTA)
 
     /**
-     * Gestisce congiunzioni (∧) con supporto per operandi multipli.
+     * Gestisce congiunzioni (&) con supporto per operandi multipli.
      *
      * SEMANTICA CONGIUNZIONE:
-     * • A ∧ B: vero solo se entrambi gli operandi sono veri
-     * • Operatore associativo: (A ∧ B) ∧ C ≡ A ∧ (B ∧ C)
-     * • Operatore commutativo: A ∧ B ≡ B ∧ A
+     * - A & B: vero solo se entrambi gli operandi sono veri
+     * - Operatore associativo: (A & B) & C ~ A & (B & C)
+     * - Operatore commutativo: A & B ~ B & A
      *
      * OTTIMIZZAZIONI:
-     * • Singolo operando: estrazione diretta senza wrapper AND
-     * • Operandi multipli: costruzione lista unificata
-     * • Preservazione ordine per debugging e tracciabilità
+     * - Singolo operando: estrazione diretta senza wrapper AND
+     * - Operandi multipli: costruzione lista unificata
+     * - Preservazione ordine per debugging e tracciabilità
      *
      * @param ctx contesto congiunzione dalla grammatica
      * @return struttura CNFConverter rappresentante la congiunzione
@@ -280,17 +277,17 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
     //region GESTIONE NEGAZIONI (PRECEDENZA ALTA)
 
     /**
-     * Gestisce negazioni (¬) con conversione diretta.
+     * Gestisce negazioni (!) con conversione diretta.
      *
      * SEMANTICA NEGAZIONE:
-     * • ¬A: vero se A è falso, falso se A è vero
-     * • Operatore unario con precedenza massima
-     * • Associatività a destra: ¬¬A gestito correttamente
+     * - !A: vero se A è falso, falso se A è vero
+     * - Operatore unario con precedenza massima
+     * - Associatività a destra: !!A gestito correttamente
      *
      * PROCESSING:
-     * • Conversione diretta in struttura NOT di CNFConverter
-     * • Delegazione elaborazione operando a livelli inferiori
-     * • Preservazione structure per successive ottimizzazioni
+     * - Conversione diretta in struttura NOT di CNFConverter
+     * - Delegazione elaborazione operando a livelli inferiori
+     * - Preservazione structure per successive ottimizzazioni
      *
      * @param ctx contesto negazione dalla grammatica
      * @return struttura CNFConverter rappresentante la negazione
@@ -432,7 +429,7 @@ public class LogicFormulaParser extends LogicFormulaBaseVisitor<CNFConverter> {
      */
     private void logParsingOperation(String operation, CNFConverter result) {
         if (LOGGER.isLoggable(java.util.logging.Level.FINEST)) {
-            LOGGER.finest(String.format("Operazione [%s] completata → %s",
+            LOGGER.finest(String.format("Operazione [%s] completata -> %s",
                     operation, result.toCompactString()));
         }
     }
