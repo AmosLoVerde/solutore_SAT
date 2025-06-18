@@ -31,53 +31,11 @@ Il software richiede:
 - **Gradle** (incluso nel progetto tramite Gradle Wrapper)
 - Sistema operativo: Linux, Windows, o macOS
 
-### 1. Installazione Java SDK 20
-
-#### Linux (Ubuntu/Debian)
-```bash
-# Aggiorna i repository
-sudo apt update
-
-# Installa OpenJDK 20
-sudo apt install openjdk-20-jdk
-
-# Verifica installazione
-java -version
-javac -version
-```
-
-#### Windows
-1. Scarica **OpenJDK 20** da [Adoptium](https://adoptium.net/) o [Oracle](https://www.oracle.com/java/technologies/downloads/)
-2. Esegui l'installer e segui la procedura guidata
-3. Configura le variabili d'ambiente:
-   - Aggiungi `JAVA_HOME` puntando alla directory di installazione (es: `C:\Program Files\Java\jdk-20`)
-   - Aggiungi `%JAVA_HOME%\bin` alla variabile `PATH`
-4. Verifica l'installazione aprendo il Prompt dei comandi:
-```cmd
-java -version
-javac -version
-```
-
-#### macOS
-```bash
-# Usando Homebrew (consigliato)
-brew install openjdk@20
-
-# Configura il path
-echo 'export PATH="/opt/homebrew/opt/openjdk@20/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-
-# Oppure scarica manualmente da Adoptium e installa il .pkg
-
-# Verifica installazione
-java -version
-```
-
-### 2. Download del solutore
+### 1. Download del solutore
 
 #### Clona il Repository
 ```bash
-git clone <repository-url>
+git clone https://github.com/AmosLoVerde/solutore_SAT.git
 cd solutore_SAT
 ```
 
@@ -92,7 +50,7 @@ cd solutore_SAT
 # Apri il Prompt dei comandi nella directory estratta
 ```
 
-### 3. Compilazione del Progetto
+### 2. Compilazione del Progetto
 
 Il progetto utilizza **Gradle Wrapper**, quindi non è necessario installare Gradle separatamente.
 
@@ -117,7 +75,7 @@ gradlew.bat build
 gradlew.bat jar
 ```
 
-### 4. Verifica installazione
+### 3. Verifica installazione
 
 Dopo la compilazione, effettua una verifica che tutto funzioni correttamente:
 
