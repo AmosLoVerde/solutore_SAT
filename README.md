@@ -81,7 +81,7 @@ Dopo la compilazione, effettua una verifica che tutto funzioni correttamente:
 
 ```bash
 # Linux/macOS
-java -jar build/libs/solutore_SAT.jar -h
+java -jar build/libs/build/libs/solutore_SAT.jar -h
 
 # Windows
 java -jar build\libs\solutore_SAT.jar -h
@@ -99,7 +99,7 @@ Dovresti vedere l'help del programma. Se appare un errore, verifica:
 ### Sintassi generale
 
 ```bash
-java -jar solutore_SAT.jar [opzioni]
+java -jar build/libs/solutore_SAT.jar [opzioni]
 ```
 
 ### Parametri disponibili
@@ -131,7 +131,7 @@ java -jar solutore_SAT.jar [opzioni]
 ### 1. Risoluzione SAT - file singolo base
 
 ```bash
-java -jar solutore_SAT.jar -f formula.txt
+java -jar build/libs/solutore_SAT.jar -f formula.txt
 ```
 
 **Input (formula.txt):**
@@ -153,7 +153,7 @@ Directory corrente/
 ### 2. Risoluzione SAT - con tutte le ottimizzazioni
 
 ```bash
-java -jar solutore_SAT.jar -f complex_formula.txt -opt=all -t 60
+java -jar build/libs/solutore_SAT.jar -f complex_formula.txt -opt=all -t 60
 ```
 
 **Output Prodotto:**
@@ -178,7 +178,7 @@ Directory corrente/
 ### 3. Elaborazione di una directory
 
 ```bash
-java -jar solutore_SAT.jar -d ./test_problems/ -opt=sr -o ./results/
+java -jar build/libs/solutore_SAT.jar -d ./test_problems/ -opt=sr -o ./results/
 ```
 
 **Struttura input:**
@@ -192,7 +192,7 @@ test_problems/
 ### 4. Utilizzo diretto dello standard DIMACS
 
 ```bash
-java -jar solutore_SAT.jar -f problem.cnf -convert -opt=s
+java -jar build/libs/solutore_SAT.jar -f problem.cnf -convert -opt=s
 ```
 
 **Output prodotto:**
@@ -209,7 +209,7 @@ results/
 ### 5. Generazione delle istanze di Pigeonhole problem
 
 ```bash
-java -jar solutore_SAT.jar -gen=pigeonhole 5 -o ./pigeonhole_tests/
+java -jar build/libs/solutore_SAT.jar -gen=pigeonhole 5 -o ./pigeonhole_tests/
 ```
 
 **Struttura output:**
@@ -226,7 +226,7 @@ pigeonhole_tests/
 ### 6. Elaborazione con Timeout personalizzato
 
 ```bash
-java -jar solutore_SAT.jar -f difficult_problem.txt -t 120
+java -jar build/libs/solutore_SAT.jar -f difficult_problem.txt -t 120
 ```
 
 ---
