@@ -57,7 +57,7 @@ import java.util.concurrent.*;
  * - PIGEONHOLE/: Istanze generate del Pigeonhole Problem (se si attiva -gen=pigeonhole)
  *
  * @author Amos Lo Verde
- * @version 1.10.0
+ * @version 1.10.1
  */
 public final class Main {
     //region CONFIGURAZIONE PARAMETRI APPLICAZIONE
@@ -1149,7 +1149,13 @@ public final class Main {
             // La prova è già formattata dal ProofGenerator:
             // <clausola di conflitto> ~ <clausola giustificante> => <clausola di spiegazione>
             String mathematicalProof = satResult.getProof();
-            writer.write(mathematicalProof);
+
+            // Se la prova è troppo grande è meglio non stamparla nel file .result
+            if (mathematicalProof.length() > 500) {
+                writer.write("La prova è troppo lunga per essere riportata.\n");
+            } else {
+                writer.write(mathematicalProof);
+            }
 
             // Controlla la presenza della clausola vuota finale
             boolean hasEmptyClauseInProof = mathematicalProof.toLowerCase().contains("[]");
@@ -1242,21 +1248,26 @@ public final class Main {
         if (stats.hasDecisionBreakdown() || true) {
             writer.write("\n=== STATISTICHE PER DECISIONE ===\n");
 
-            writer.write(String.format("- PRE #1-decisione: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
-                    stats.getPropagations() - totalPropagations,
-                    stats.getConflicts() - totalConflicts,
-                    stats.getExplanations() - totalExplanations,
-                    stats.getLearnedClauses() - totalLearnedClauses));
+            // Evita di riportare i dettagli delle singole decisioni se sono più di 30
+            if (stats.getDecisions() > 30) {
+                writer.write("Il numero di decisioni è troppo grande per riportare qui ogni dettaglio di ciascuna decisione.");
+            } else {
+                writer.write(String.format("- PRE #1-decisione: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                        stats.getPropagations() - totalPropagations,
+                        stats.getConflicts() - totalConflicts,
+                        stats.getExplanations() - totalExplanations,
+                        stats.getLearnedClauses() - totalLearnedClauses));
 
-            List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
+                List<SATStatistics.DecisionBreakdown> breakdowns = stats.getDecisionBreakdowns();
 
-            for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
-                writer.write(String.format("- Decisione #%d: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
-                        breakdown.decisionNumber,
-                        breakdown.propagations,
-                        breakdown.conflicts,
-                        breakdown.explanations,
-                        breakdown.learnedClauses));
+                for (SATStatistics.DecisionBreakdown breakdown : breakdowns) {
+                    writer.write(String.format("- Decisione #%d: %d propagazioni, %d conflitti, %d spiegazioni, %d clausole apprese\n",
+                            breakdown.decisionNumber,
+                            breakdown.propagations,
+                            breakdown.conflicts,
+                            breakdown.explanations,
+                            breakdown.learnedClauses));
+                }
             }
         } else {
             writer.write("\n=== STATISTICHE PER DECISIONE ===\n");

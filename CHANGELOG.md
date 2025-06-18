@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.10.1] - 2025-06-18
+### Fixed
+- Introdotti limiti di lunghezza per gli output scritti nei file `.result`.
+- Se la dimensione della statistica o della prova supera una certa soglia,
+  allora viene visualizzato un messaggio informativo invece del contenuto completo.
+
+
 ## [1.10.0] - 2025-06-18
 ### Added
 - Introdotta la nuova flag `-convert` per l’elaborazione di file `.cnf` in formato DIMACS.

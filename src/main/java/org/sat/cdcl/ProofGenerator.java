@@ -270,14 +270,14 @@ public class ProofGenerator {
 
     /**
      * Formatta singola spiegazione nel formato standard di output.
-     * Formato: (clausola1) e (clausola2) genera risultato
+     * Formato: (clausola1) ~ (clausola2) => risultato
      */
     private String formatExplanationStep(ExplanationStep step) {
         String justifyingFormatted = formatClauseForOutput(step.getJustifyingClause());
         String conflictFormatted = formatClauseForOutput(step.getConflictClause());
         String explanationFormatted = formatClauseForOutput(step.getExplanation());
 
-        return String.format("(%s) e (%s) genera (%s)\n",
+        return String.format("(%s) ~ (%s) => (%s)\n",
                 justifyingFormatted, conflictFormatted, explanationFormatted);
     }
 
