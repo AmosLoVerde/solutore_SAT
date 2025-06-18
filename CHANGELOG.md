@@ -5,6 +5,13 @@ Tutte le modifiche significative a questo progetto sono documentate in questo fi
 Il formato segue le linee guida di [Keep a Changelog](https://keepachangelog.com/it-IT/1.0.0/)
 e adotta il [versionamento semantico](https://semver.org/lang/it/).
 
+## [1.10.0] - 2025-06-18
+### Added
+- Introdotta la nuova flag `-convert` per l’elaborazione di file `.cnf` in formato DIMACS.
+- Ora è possibile testare problemi SAT/UNSAT presenti online o in dataset standard,
+  garantendo piena compatibilità con lo standard DIMACS.
+
+
 ## [1.9.2] - 2025-06-17
 ### Refactored
 - Sistemati e aggiornati alcuni commenti nel codice per migliorarne la leggibilità.
