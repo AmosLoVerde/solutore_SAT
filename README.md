@@ -286,7 +286,7 @@ Il software supporta formule logiche proposizionali arbitrarie scritte usando la
 |-----------|-------------------|---------|
 | **NOT** (Negazione) | `!`, `'not'`, `'NOT'` | `!P`, `not Q`, `NOT R` |
 | **AND** (Congiunzione) | `&`, `'and'`, `'AND'` | `P & Q`, `P and Q`, `P AND Q` |
-| **OR** (Disgiunzione) | `\|`, `'or'`, `'OR'` | `P | Q`, `P or Q`, `P OR Q` |
+| **OR** (Disgiunzione) | `\|`, `'or'`, `'OR'` | `P \| Q`, `P or Q`, `P OR Q` |
 | **IMPLIES** (Implicazione) | `->`, `'=>'`, `'implies'`, `'IMPLIES'` | `P -> Q`, `P => Q`, `P implies Q` |
 | **IFF** (Biimplicazione) | `<->`, `'<=>'`, `'iff'`, `'IFF'` | `P <-> Q`, `P <=> Q`, `P iff Q` |
 
