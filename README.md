@@ -42,7 +42,7 @@ cd solutore_SAT
 #### Oppure Estrai l'Archivio
 ```bash
 # Linux/macOS
-tar -xzf solutore_SAT.tgz
+unzip solutore_SAT.tgz
 cd solutore_SAT
 
 # Windows
